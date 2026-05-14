@@ -3,9 +3,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_API_TOKEN") or os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не найден! Проверь файл .env")
+    raise ValueError("BOT_API_TOKEN не найден! Проверь переменные окружения")
 
 OWNER_ID = 6101243914
 
