@@ -212,6 +212,17 @@ def get_users_with_auto_unlock() -> list[tuple[int, str, str | None]]:
         ).fetchall()
 
 
+def get_all_users_with_zp_jobs() -> list[tuple[int, str, str]]:
+    """Returns [(user_id, zp_key, job_id)] for all users with an unnotified zp job."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT j.user_id, z.api_key, j.job_id "
+            "FROM zp_jobs j "
+            "JOIN zp_keys z ON j.user_id = z.user_id "
+            "WHERE j.notified = 0"
+        ).fetchall()
+
+
 def clear_zp_job(user_id: int):
     with get_conn() as conn:
         conn.execute("DELETE FROM zp_jobs WHERE user_id = ?", (user_id,))

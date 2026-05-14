@@ -285,12 +285,15 @@ async def fu_confirm(callback: CallbackQuery, state: FSMContext):
         save_zp_job(callback.from_user.id, job_id)
 
     total    = result.get("total_accounts", 0)
-    db_free  = result.get("db_accounts_count", 0)
     paid     = result.get("paid_accounts_count", 0)
     est_cost = result.get("estimated_cost", 0.0)
 
-    await callback.answer(
-        f"✅ Задача запущена! Платных: {paid} (~${est_cost:.2f})"
+    await callback.answer(f"✅ Задача запущена! Платных: {paid} (~${est_cost:.2f})")
+    await callback.message.answer(
+        f"🔓 <b>Auto-Unlock-Face</b> — цикл запущен 🚀\n\n"
+        f"📋 Аккаунтов: <b>{total}</b>  |  💰 Платных: {paid} (~${est_cost:.2f})\n\n"
+        "Уведомлю когда задача завершится.",
+        parse_mode="HTML",
     )
     await _show_fu(callback.message, callback.from_user.id, edit=True)
 

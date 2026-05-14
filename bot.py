@@ -14,6 +14,7 @@ from database import (
     init_db,
     get_users_with_alerts, update_alert_notified,
     get_users_with_auto_unlock,
+    get_all_users_with_zp_jobs,
     get_zp_job, save_zp_job, clear_zp_job,
     is_zp_job_notified, set_zp_job_notified,
 )
@@ -122,15 +123,7 @@ async def auto_unlock_loop(bot: Bot):
 
 
 async def poll_job_completion(bot: Bot):
-    for user_id, ao_key, zp_key in get_users_with_auto_unlock():
-        if not zp_key:
-            continue
-        job_id = get_zp_job(user_id)
-        if not job_id:
-            continue
-        if is_zp_job_notified(user_id):
-            continue
-
+    for user_id, zp_key, job_id in get_all_users_with_zp_jobs():
         ok_s, st, err_s = await get_status(zp_key, job_id)
         if not ok_s:
             if err_s == "not_found":
@@ -149,14 +142,17 @@ async def poll_job_completion(bot: Bot):
         total      = st.get("total_accounts", 0)
         successful = st.get("successful", 0)
         failed     = st.get("failed", 0)
+        other      = st.get("other_failed", 0)
+
+        lines = [f"🔓 <b>Auto-Unlock-Face</b> — {label} {icon}", ""]
+        lines.append(f"📊 Всего аккаунтов: <b>{total}</b>")
+        lines.append(f"✅ Разблокировано: <b>{successful}</b>")
+        lines.append(f"❌ Face ID не снят: <b>{failed}</b>")
+        if other:
+            lines.append(f"⚠️ Прочие ошибки: <b>{other}</b>")
 
         try:
-            await bot.send_message(
-                user_id,
-                f"🔓 <b>Auto-Unlock-Face</b> — задача {label} {icon}\n\n"
-                f"Всего: {total}  |  ✅ {successful}  |  ❌ {failed}",
-                parse_mode="HTML",
-            )
+            await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML")
             set_zp_job_notified(user_id)
         except Exception as e:
             logging.error("Job poller notify user=%s: %s", user_id, e)
