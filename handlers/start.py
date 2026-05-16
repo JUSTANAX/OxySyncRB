@@ -12,6 +12,7 @@ from database import (
     save_pet_snapshot, get_pets_farmed,
 )
 from keyboards import stats_kb, settings_kb, alerts_kb, cancel_kb, back_kb
+from state_cache import save_stats_msg, clear_stats_msg
 
 PERIODS = [
     (1,   "1ч"),
@@ -145,6 +146,7 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
             except TelegramBadRequest as e:
                 if "message is not modified" not in str(e):
                     raise
+            save_stats_msg(user_id, msg_or_obj.chat.id, msg_or_obj.message_id)
         else:
             loading = await msg_or_obj.answer("🔄 Загружаю...")
             text = await build_stats_text(user_id)
@@ -152,6 +154,7 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
                 await loading.edit_text(text, parse_mode="HTML", reply_markup=kb)
             except (TelegramBadRequest, TelegramNetworkError):
                 await msg_or_obj.answer(text, parse_mode="HTML", reply_markup=kb)
+            save_stats_msg(user_id, loading.chat.id, loading.message_id)
     except (TelegramBadRequest, TelegramNetworkError):
         pass
 
@@ -179,6 +182,7 @@ async def on_noop(callback: CallbackQuery):
 
 @router.callback_query(lambda c: c.data == "settings")
 async def open_settings(callback: CallbackQuery):
+    clear_stats_msg(callback.from_user.id)
     has_key = get_panel(callback.from_user.id) is not None
     await callback.message.edit_text(
         "🔧 <b>Настройки</b>",
@@ -204,6 +208,7 @@ async def set_key_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(lambda c: c.data == "alerts")
 async def open_alerts(callback: CallbackQuery):
+    clear_stats_msg(callback.from_user.id)
     row = get_alert(callback.from_user.id)
     threshold = row[0] if row else None
     enabled   = bool(row[1]) if row else False

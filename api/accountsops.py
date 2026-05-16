@@ -1,7 +1,11 @@
 import re
+import json
+import asyncio
 import logging
 import aiohttp
 from config import ACCOUNTSOPS_URL
+
+_RETRY_EXC = (aiohttp.ClientConnectorError, aiohttp.ServerDisconnectedError, asyncio.TimeoutError)
 
 
 def pet_kind_to_name(pet_kind: str) -> str:
@@ -12,50 +16,64 @@ def pet_kind_to_name(pet_kind: str) -> str:
 async def _post(api_key: str, endpoint: str, body: dict) -> tuple[bool, any, str]:
     headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
     url = f"{ACCOUNTSOPS_URL}{endpoint}"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url, headers=headers, json=body,
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                raw = await resp.text()
-                if resp.status == 401:
-                    return False, None, "Неверный API ключ."
-                if resp.status == 403:
-                    return False, None, "Доступ запрещён."
-                if resp.status != 200:
-                    return False, None, f"Ошибка сервера (код {resp.status})."
-                import json as _json
-                return True, _json.loads(raw), ""
-    except aiohttp.ClientConnectorError:
-        return False, None, "Не удалось подключиться к AccountsOps."
-    except Exception as e:
-        return False, None, f"Ошибка: {e}"
+    last_err = "Не удалось подключиться к AccountsOps."
+    for attempt in range(3):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url, headers=headers, json=body,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    raw = await resp.text()
+                    if resp.status == 401:
+                        return False, None, "Неверный API ключ."
+                    if resp.status == 403:
+                        return False, None, "Доступ запрещён."
+                    if resp.status != 200:
+                        return False, None, f"Ошибка сервера (код {resp.status})."
+                    return True, json.loads(raw), ""
+        except asyncio.TimeoutError:
+            last_err = "Превышен таймаут AccountsOps."
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+        except _RETRY_EXC:
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+        except Exception as e:
+            return False, None, f"Ошибка: {e}"
+    return False, None, last_err
 
 
 async def _get(api_key: str, endpoint: str) -> tuple[bool, any, str]:
     headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
     url = f"{ACCOUNTSOPS_URL}{endpoint}"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
-            ) as resp:
-                body = await resp.text()
-                logging.debug("[AO] %s → %s", endpoint, resp.status)
-                if resp.status == 401:
-                    return False, None, "Неверный API ключ."
-                if resp.status == 403:
-                    return False, None, "Доступ запрещён."
-                if resp.status != 200:
-                    return False, None, f"Ошибка сервера (код {resp.status})."
-                import json
-                return True, json.loads(body), ""
-    except aiohttp.ClientConnectorError:
-        return False, None, "Не удалось подключиться к AccountsOps."
-    except Exception as e:
-        logging.error("[AO] %s → %s", endpoint, e)
-        return False, None, f"Ошибка: {e}"
+    last_err = "Не удалось подключиться к AccountsOps."
+    for attempt in range(3):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
+                ) as resp:
+                    body = await resp.text()
+                    logging.debug("[AO] %s → %s", endpoint, resp.status)
+                    if resp.status == 401:
+                        return False, None, "Неверный API ключ."
+                    if resp.status == 403:
+                        return False, None, "Доступ запрещён."
+                    if resp.status != 200:
+                        return False, None, f"Ошибка сервера (код {resp.status})."
+                    return True, json.loads(body), ""
+        except asyncio.TimeoutError:
+            last_err = "Превышен таймаут AccountsOps."
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+        except _RETRY_EXC:
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+        except Exception as e:
+            logging.error("[AO] %s → %s", endpoint, e)
+            return False, None, f"Ошибка: {e}"
+    return False, None, last_err
 
 
 async def get_dashboard(api_key: str) -> tuple[bool, dict, str]:

@@ -54,7 +54,12 @@ def fu_no_key_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def fu_kb(job_status: str | None, result_files: list, auto_enabled: bool = False) -> InlineKeyboardMarkup:
+def fu_kb(
+    job_status: str | None,
+    result_files: list,
+    auto_enabled: bool = False,
+    interval: float = 3.0,
+) -> InlineKeyboardMarkup:
     rows = []
     if job_status in ("pending", "processing"):
         rows.append([
@@ -83,6 +88,11 @@ def fu_kb(job_status: str | None, result_files: list, auto_enabled: bool = False
         )])
     auto_label = "🔁 Авто-цикл: ✅" if auto_enabled else "🔁 Авто-цикл: ❌"
     rows.append([InlineKeyboardButton(text=auto_label, callback_data="fu_auto_toggle")])
+    if auto_enabled:
+        hours_str = f"{int(interval)}ч" if interval == int(interval) else f"{interval}ч"
+        rows.append([InlineKeyboardButton(
+            text=f"⏱ Интервал: {hours_str}", callback_data="fu_interval_cycle"
+        )])
     rows.append([
         InlineKeyboardButton(text="🔑 Ключ ZP", callback_data="fu_set_key"),
         InlineKeyboardButton(text="🔙 Назад",    callback_data="automation"),

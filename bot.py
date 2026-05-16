@@ -1,9 +1,7 @@
 import asyncio
 import logging
-import random
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(message)s")
 
-from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
@@ -12,14 +10,16 @@ from aiogram.types import TelegramObject
 from config import BOT_TOKEN, OWNER_ID
 from database import (
     init_db,
-    get_users_with_alerts, update_alert_notified,
-    get_users_with_auto_unlock,
+    get_users_with_alerts, update_alert_notified, set_alert_triggered,
+    get_users_due_for_auto_unlock, update_auto_unlock_last_run,
     get_all_users_with_zp_jobs,
     get_zp_job, save_zp_job, clear_zp_job,
-    is_zp_job_notified, set_zp_job_notified,
 )
 from handlers import start
 from handlers import faceunlock
+from handlers.start import build_stats_text
+from keyboards import stats_kb
+from state_cache import get_all_stats_msgs, clear_stats_msg
 from api.accountsops import get_dashboard, get_face_accounts
 from api.faceunlock import submit_job, get_status
 
@@ -33,21 +33,14 @@ class OwnerOnly(BaseMiddleware):
 
 
 async def check_alerts(bot: Bot):
-    for user_id, api_key, threshold, last_notified in get_users_with_alerts():
-        if last_notified:
-            try:
-                last = datetime.fromisoformat(last_notified)
-                if datetime.utcnow() - last < timedelta(minutes=30):
-                    continue
-            except Exception:
-                pass
-
+    for user_id, api_key, threshold, last_notified, triggered in get_users_with_alerts():
         ok, data, _ = await get_dashboard(api_key)
         if not ok:
             continue
 
         count = data.get("active_count", 0)
-        if count < threshold:
+
+        if count < threshold and not triggered:
             try:
                 await bot.send_message(
                     user_id,
@@ -57,9 +50,22 @@ async def check_alerts(bot: Bot):
                     "Проверь ферму!",
                     parse_mode="HTML",
                 )
+                set_alert_triggered(user_id, True)
                 update_alert_notified(user_id)
             except Exception as e:
                 logging.error("Alert send user=%s: %s", user_id, e)
+        elif count >= threshold and triggered:
+            try:
+                await bot.send_message(
+                    user_id,
+                    f"✅ <b>OxySync — Восстановление</b>\n\n"
+                    f"Активных аккаунтов: <b>{count}</b>\n"
+                    "Ферма работает нормально.",
+                    parse_mode="HTML",
+                )
+                set_alert_triggered(user_id, False)
+            except Exception as e:
+                logging.error("Alert recovery user=%s: %s", user_id, e)
 
 
 async def alert_loop(bot: Bot):
@@ -72,9 +78,13 @@ async def alert_loop(bot: Bot):
 
 
 async def run_auto_unlock(bot: Bot):
-    for user_id, ao_key, zp_key in get_users_with_auto_unlock():
+    for user_id, ao_key, zp_key in get_users_due_for_auto_unlock():
         if not zp_key:
             continue
+
+        # Mark as run immediately so concurrent checks don't double-fire
+        update_auto_unlock_last_run(user_id)
+
         # Skip if there's already an active job
         job_id = get_zp_job(user_id)
         if job_id:
@@ -114,8 +124,7 @@ async def run_auto_unlock(bot: Bot):
 
 async def auto_unlock_loop(bot: Bot):
     while True:
-        delay = random.uniform(2 * 3600, 4 * 3600)
-        await asyncio.sleep(delay)
+        await asyncio.sleep(1800)  # check every 30 min, per-user intervals handled in DB
         try:
             await run_auto_unlock(bot)
         except Exception as e:
@@ -153,9 +162,11 @@ async def poll_job_completion(bot: Bot):
 
         try:
             await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML")
-            set_zp_job_notified(user_id)
         except Exception as e:
             logging.error("Job poller notify user=%s: %s", user_id, e)
+
+        # Always clear regardless of send success so the job doesn't get stuck
+        clear_zp_job(user_id)
 
 
 async def job_poller_loop(bot: Bot):
@@ -165,6 +176,26 @@ async def job_poller_loop(bot: Bot):
             await poll_job_completion(bot)
         except Exception as e:
             logging.error("Job poller loop error: %s", e)
+
+
+async def stats_refresh_loop(bot: Bot):
+    while True:
+        await asyncio.sleep(300)  # every 5 minutes
+        for user_id, chat_id, message_id in get_all_stats_msgs():
+            try:
+                text = await build_stats_text(user_id)
+                await bot.edit_message_text(
+                    text,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    parse_mode="HTML",
+                    reply_markup=stats_kb(),
+                )
+            except TelegramBadRequest as e:
+                if "message is not modified" not in str(e):
+                    clear_stats_msg(user_id)
+            except Exception:
+                clear_stats_msg(user_id)
 
 
 async def main():
@@ -188,6 +219,7 @@ async def main():
     asyncio.create_task(alert_loop(bot))
     asyncio.create_task(auto_unlock_loop(bot))
     asyncio.create_task(job_poller_loop(bot))
+    asyncio.create_task(stats_refresh_loop(bot))
     print("OxySync Bot запущен ✅")
     await dp.start_polling(bot)
 

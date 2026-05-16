@@ -11,8 +11,12 @@ from database import (
     get_zp_key, save_zp_key,
     get_zp_job, save_zp_job, clear_zp_job,
     get_auto_unlock, set_auto_unlock,
+    get_auto_unlock_interval, set_auto_unlock_interval,
 )
 from keyboards import automation_kb, fu_no_key_kb, fu_kb, fu_confirm_kb, cancel_to_fu_kb
+from state_cache import clear_stats_msg
+
+_INTERVAL_PRESETS = [1.0, 2.0, 3.0, 4.0, 6.0]
 
 router = Router()
 
@@ -97,7 +101,8 @@ async def _build_fu_page(user_id: int) -> tuple[str, any]:
         lines.append("\n📭 Нет активных задач")
 
     auto_enabled = get_auto_unlock(user_id)
-    return "\n".join(lines), fu_kb(job_status, result_files, auto_enabled)
+    interval = get_auto_unlock_interval(user_id)
+    return "\n".join(lines), fu_kb(job_status, result_files, auto_enabled, interval)
 
 
 async def _show_fu(target, user_id: int, edit: bool = False):
@@ -116,6 +121,7 @@ async def _show_fu(target, user_id: int, edit: bool = False):
 
 @router.callback_query(lambda c: c.data == "automation")
 async def open_automation(callback: CallbackQuery, state: FSMContext):
+    clear_stats_msg(callback.from_user.id)
     await state.clear()
     await callback.message.edit_text(
         "🤖 <b>Автоматизация</b>\n\nВыбери инструмент:",
@@ -354,4 +360,21 @@ async def fu_auto_toggle(callback: CallbackQuery):
     set_auto_unlock(user_id, new_val)
     status = "включён ✅" if new_val else "выключен ❌"
     await callback.answer(f"🔁 Авто-цикл {status}", show_alert=False)
+    await _show_fu(callback.message, user_id, edit=True)
+
+
+# ─── Face Unlock — интервал авто-цикла ───────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "fu_interval_cycle")
+async def fu_interval_cycle(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    current = get_auto_unlock_interval(user_id)
+    try:
+        idx = _INTERVAL_PRESETS.index(current)
+        next_val = _INTERVAL_PRESETS[(idx + 1) % len(_INTERVAL_PRESETS)]
+    except ValueError:
+        next_val = _INTERVAL_PRESETS[0]
+    set_auto_unlock_interval(user_id, next_val)
+    hours_str = f"{int(next_val)}ч"
+    await callback.answer(f"⏱ Интервал: {hours_str}")
     await _show_fu(callback.message, user_id, edit=True)

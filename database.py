@@ -2,248 +2,289 @@ import sqlite3
 from datetime import datetime, timedelta
 from config import DB_PATH
 
+_conn: sqlite3.Connection | None = None
 
-def get_conn():
-    return sqlite3.connect(DB_PATH, isolation_level=None)
+
+def _get_conn() -> sqlite3.Connection:
+    global _conn
+    if _conn is None:
+        _conn = sqlite3.connect(DB_PATH, check_same_thread=False, isolation_level=None)
+    return _conn
 
 
 def init_db():
-    with get_conn() as conn:
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS panels (
-                user_id      INTEGER PRIMARY KEY,
-                api_key      TEXT NOT NULL,
-                connected_at TEXT DEFAULT (datetime('now'))
-            );
+    conn = _get_conn()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS panels (
+            user_id      INTEGER PRIMARY KEY,
+            api_key      TEXT NOT NULL,
+            connected_at TEXT DEFAULT (datetime('now'))
+        );
 
-            CREATE TABLE IF NOT EXISTS pet_snapshots (
-                user_id     INTEGER,
-                pet_kind    TEXT,
-                quantity    INTEGER,
-                recorded_at TEXT,
-                PRIMARY KEY (user_id, pet_kind, recorded_at)
-            );
+        CREATE TABLE IF NOT EXISTS pet_snapshots (
+            user_id     INTEGER,
+            pet_kind    TEXT,
+            quantity    INTEGER,
+            recorded_at TEXT,
+            PRIMARY KEY (user_id, pet_kind, recorded_at)
+        );
 
-            CREATE TABLE IF NOT EXISTS alert_thresholds (
-                user_id       INTEGER PRIMARY KEY,
-                threshold     INTEGER,
-                enabled       INTEGER DEFAULT 1,
-                last_notified TEXT
-            );
+        CREATE TABLE IF NOT EXISTS alert_thresholds (
+            user_id       INTEGER PRIMARY KEY,
+            threshold     INTEGER,
+            enabled       INTEGER DEFAULT 1,
+            last_notified TEXT,
+            triggered     INTEGER DEFAULT 0
+        );
 
-            CREATE TABLE IF NOT EXISTS zp_keys (
-                user_id  INTEGER PRIMARY KEY,
-                api_key  TEXT NOT NULL
-            );
+        CREATE TABLE IF NOT EXISTS zp_keys (
+            user_id  INTEGER PRIMARY KEY,
+            api_key  TEXT NOT NULL
+        );
 
-            CREATE TABLE IF NOT EXISTS zp_jobs (
-                user_id  INTEGER PRIMARY KEY,
-                job_id   TEXT NOT NULL,
-                notified INTEGER DEFAULT 0,
-                added_at TEXT DEFAULT (datetime('now'))
-            );
+        CREATE TABLE IF NOT EXISTS zp_jobs (
+            user_id  INTEGER PRIMARY KEY,
+            job_id   TEXT NOT NULL,
+            notified INTEGER DEFAULT 0,
+            added_at TEXT DEFAULT (datetime('now'))
+        );
 
-            CREATE TABLE IF NOT EXISTS auto_unlock (
-                user_id INTEGER PRIMARY KEY,
-                enabled INTEGER DEFAULT 0
-            );
-        """)
+        CREATE TABLE IF NOT EXISTS auto_unlock (
+            user_id        INTEGER PRIMARY KEY,
+            enabled        INTEGER DEFAULT 0,
+            interval_hours REAL DEFAULT 3.0,
+            last_run_at    TEXT
+        );
+    """)
+    # Migrations for existing databases
+    for stmt in (
+        "ALTER TABLE zp_jobs ADD COLUMN notified INTEGER DEFAULT 0",
+        "ALTER TABLE alert_thresholds ADD COLUMN triggered INTEGER DEFAULT 0",
+        "ALTER TABLE auto_unlock ADD COLUMN interval_hours REAL DEFAULT 3.0",
+        "ALTER TABLE auto_unlock ADD COLUMN last_run_at TEXT",
+    ):
         try:
-            conn.execute("ALTER TABLE zp_jobs ADD COLUMN notified INTEGER DEFAULT 0")
+            conn.execute(stmt)
         except Exception:
             pass
 
 
+# ─── Panels ──────────────────────────────────────────────────────────────────
+
 def get_panel(user_id: int) -> str | None:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT api_key FROM panels WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        return row[0] if row else None
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT api_key FROM panels WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    return row[0] if row else None
 
 
 def save_panel(user_id: int, api_key: str):
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO panels (user_id, api_key) VALUES (?, ?)",
-            (user_id, api_key),
-        )
+    conn = _get_conn()
+    conn.execute(
+        "INSERT OR REPLACE INTO panels (user_id, api_key) VALUES (?, ?)",
+        (user_id, api_key),
+    )
 
+
+# ─── Alerts ──────────────────────────────────────────────────────────────────
 
 def get_alert(user_id: int):
-    with get_conn() as conn:
-        return conn.execute(
-            "SELECT threshold, enabled, last_notified FROM alert_thresholds WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT threshold, enabled, last_notified FROM alert_thresholds WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
 
 
 def set_alert(user_id: int, threshold: int):
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO alert_thresholds (user_id, threshold, enabled) VALUES (?, ?, 1) "
-            "ON CONFLICT(user_id) DO UPDATE SET threshold = excluded.threshold, enabled = 1",
-            (user_id, threshold),
-        )
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO alert_thresholds (user_id, threshold, enabled) VALUES (?, ?, 1) "
+        "ON CONFLICT(user_id) DO UPDATE SET threshold = excluded.threshold, enabled = 1",
+        (user_id, threshold),
+    )
 
 
 def toggle_alert(user_id: int) -> bool:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT enabled FROM alert_thresholds WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        new_val = 0 if (row and row[0]) else 1
-        conn.execute(
-            "UPDATE alert_thresholds SET enabled = ? WHERE user_id = ?",
-            (new_val, user_id),
-        )
-        return bool(new_val)
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT enabled FROM alert_thresholds WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    new_val = 0 if (row and row[0]) else 1
+    conn.execute(
+        "UPDATE alert_thresholds SET enabled = ? WHERE user_id = ?",
+        (new_val, user_id),
+    )
+    return bool(new_val)
 
 
 def get_users_with_alerts() -> list:
-    with get_conn() as conn:
-        return conn.execute(
-            "SELECT a.user_id, p.api_key, a.threshold, a.last_notified "
-            "FROM alert_thresholds a JOIN panels p ON a.user_id = p.user_id "
-            "WHERE a.enabled = 1 AND a.threshold IS NOT NULL"
-        ).fetchall()
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT a.user_id, p.api_key, a.threshold, a.last_notified, COALESCE(a.triggered, 0) "
+        "FROM alert_thresholds a JOIN panels p ON a.user_id = p.user_id "
+        "WHERE a.enabled = 1 AND a.threshold IS NOT NULL"
+    ).fetchall()
 
 
 def update_alert_notified(user_id: int):
-    with get_conn() as conn:
-        conn.execute(
-            "UPDATE alert_thresholds SET last_notified = ? WHERE user_id = ?",
-            (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), user_id),
-        )
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE alert_thresholds SET last_notified = ? WHERE user_id = ?",
+        (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), user_id),
+    )
 
+
+def set_alert_triggered(user_id: int, triggered: bool):
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE alert_thresholds SET triggered = ? WHERE user_id = ?",
+        (int(triggered), user_id),
+    )
+
+
+# ─── Pet snapshots ────────────────────────────────────────────────────────────
 
 def save_pet_snapshot(user_id: int, pets: dict):
+    conn = _get_conn()
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:00")
     cutoff = (datetime.utcnow() - timedelta(days=8)).strftime("%Y-%m-%d %H:%M:00")
-    with get_conn() as conn:
+    conn.execute(
+        "DELETE FROM pet_snapshots WHERE user_id = ? AND recorded_at < ?",
+        (user_id, cutoff),
+    )
+    for kind, data in pets.items():
         conn.execute(
-            "DELETE FROM pet_snapshots WHERE user_id = ? AND recorded_at < ?",
-            (user_id, cutoff),
+            "INSERT OR REPLACE INTO pet_snapshots (user_id, pet_kind, quantity, recorded_at) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, kind, data["quantity"], now),
         )
-        for kind, data in pets.items():
-            conn.execute(
-                "INSERT OR REPLACE INTO pet_snapshots (user_id, pet_kind, quantity, recorded_at) "
-                "VALUES (?, ?, ?, ?)",
-                (user_id, kind, data["quantity"], now),
-            )
 
 
-# ─── ZeroPoint ───────────────────────────────────────────────────────────────
+def get_pets_farmed(user_id: int, current_pets: dict, hours: float) -> dict | None:
+    conn = _get_conn()
+    target = (datetime.utcnow() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:00")
+    row = conn.execute(
+        "SELECT recorded_at FROM pet_snapshots "
+        "WHERE user_id = ? AND recorded_at <= ? ORDER BY recorded_at DESC LIMIT 1",
+        (user_id, target),
+    ).fetchone()
+    if not row:
+        return None
+    rows = conn.execute(
+        "SELECT pet_kind, quantity FROM pet_snapshots WHERE user_id = ? AND recorded_at = ?",
+        (user_id, row[0]),
+    ).fetchall()
+    past = {kind: qty for kind, qty in rows}
+    return {kind: max(0, data["quantity"] - past.get(kind, 0)) for kind, data in current_pets.items()}
+
+
+# ─── ZeroPoint keys & jobs ───────────────────────────────────────────────────
 
 def get_zp_key(user_id: int) -> str | None:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT api_key FROM zp_keys WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        return row[0] if row else None
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT api_key FROM zp_keys WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    return row[0] if row else None
 
 
 def save_zp_key(user_id: int, api_key: str):
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO zp_keys (user_id, api_key) VALUES (?, ?)",
-            (user_id, api_key),
-        )
+    conn = _get_conn()
+    conn.execute(
+        "INSERT OR REPLACE INTO zp_keys (user_id, api_key) VALUES (?, ?)",
+        (user_id, api_key),
+    )
 
 
 def get_zp_job(user_id: int) -> str | None:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT job_id FROM zp_jobs WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        return row[0] if row else None
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT job_id FROM zp_jobs WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    return row[0] if row else None
 
 
 def save_zp_job(user_id: int, job_id: str):
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO zp_jobs (user_id, job_id, notified) VALUES (?, ?, 0) "
-            "ON CONFLICT(user_id) DO UPDATE SET job_id = excluded.job_id, notified = 0",
-            (user_id, job_id),
-        )
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO zp_jobs (user_id, job_id, notified) VALUES (?, ?, 0) "
+        "ON CONFLICT(user_id) DO UPDATE SET job_id = excluded.job_id, notified = 0",
+        (user_id, job_id),
+    )
 
 
-def is_zp_job_notified(user_id: int) -> bool:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT notified FROM zp_jobs WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        return bool(row and row[0])
-
-
-def set_zp_job_notified(user_id: int):
-    with get_conn() as conn:
-        conn.execute(
-            "UPDATE zp_jobs SET notified = 1 WHERE user_id = ?", (user_id,)
-        )
-
-
-def get_auto_unlock(user_id: int) -> bool:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT enabled FROM auto_unlock WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        return bool(row and row[0])
-
-
-def set_auto_unlock(user_id: int, enabled: bool):
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO auto_unlock (user_id, enabled) VALUES (?, ?) "
-            "ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled",
-            (user_id, int(enabled)),
-        )
-
-
-def get_users_with_auto_unlock() -> list[tuple[int, str, str | None]]:
-    """Returns [(user_id, ao_key, zp_key)] for users with auto-unlock enabled."""
-    with get_conn() as conn:
-        return conn.execute(
-            "SELECT a.user_id, p.api_key, z.api_key "
-            "FROM auto_unlock a "
-            "JOIN panels p ON a.user_id = p.user_id "
-            "LEFT JOIN zp_keys z ON a.user_id = z.user_id "
-            "WHERE a.enabled = 1"
-        ).fetchall()
+def clear_zp_job(user_id: int):
+    conn = _get_conn()
+    conn.execute("DELETE FROM zp_jobs WHERE user_id = ?", (user_id,))
 
 
 def get_all_users_with_zp_jobs() -> list[tuple[int, str, str]]:
     """Returns [(user_id, zp_key, job_id)] for all users with an unnotified zp job."""
-    with get_conn() as conn:
-        return conn.execute(
-            "SELECT j.user_id, z.api_key, j.job_id "
-            "FROM zp_jobs j "
-            "JOIN zp_keys z ON j.user_id = z.user_id "
-            "WHERE j.notified = 0"
-        ).fetchall()
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT j.user_id, z.api_key, j.job_id "
+        "FROM zp_jobs j "
+        "JOIN zp_keys z ON j.user_id = z.user_id "
+        "WHERE j.notified = 0"
+    ).fetchall()
 
 
-def clear_zp_job(user_id: int):
-    with get_conn() as conn:
-        conn.execute("DELETE FROM zp_jobs WHERE user_id = ?", (user_id,))
+# ─── Auto-unlock ─────────────────────────────────────────────────────────────
+
+def get_auto_unlock(user_id: int) -> bool:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT enabled FROM auto_unlock WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    return bool(row and row[0])
 
 
-# ─── Снапшоты петов ───────────────────────────────────────────────────────────
+def set_auto_unlock(user_id: int, enabled: bool):
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO auto_unlock (user_id, enabled) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled",
+        (user_id, int(enabled)),
+    )
 
-def get_pets_farmed(user_id: int, current_pets: dict, hours: float) -> dict | None:
-    """Returns {pet_kind: farmed_count} for the given period. None if no data."""
-    target = (datetime.utcnow() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:00")
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT recorded_at FROM pet_snapshots "
-            "WHERE user_id = ? AND recorded_at <= ? ORDER BY recorded_at DESC LIMIT 1",
-            (user_id, target),
-        ).fetchone()
-        if not row:
-            return None
-        rows = conn.execute(
-            "SELECT pet_kind, quantity FROM pet_snapshots WHERE user_id = ? AND recorded_at = ?",
-            (user_id, row[0]),
-        ).fetchall()
-    past = {kind: qty for kind, qty in rows}
-    return {kind: max(0, data["quantity"] - past.get(kind, 0)) for kind, data in current_pets.items()}
+
+def get_users_due_for_auto_unlock() -> list[tuple[int, str, str | None]]:
+    """Returns [(user_id, ao_key, zp_key)] for users whose unlock interval has elapsed."""
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT a.user_id, p.api_key, z.api_key "
+        "FROM auto_unlock a "
+        "JOIN panels p ON a.user_id = p.user_id "
+        "LEFT JOIN zp_keys z ON a.user_id = z.user_id "
+        "WHERE a.enabled = 1 "
+        "AND (a.last_run_at IS NULL "
+        "     OR datetime(a.last_run_at, "
+        "                 '+' || CAST(CAST(COALESCE(a.interval_hours, 3.0) * 60 AS INTEGER) AS TEXT) || ' minutes') "
+        "         <= datetime('now'))"
+    ).fetchall()
+
+
+def update_auto_unlock_last_run(user_id: int):
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE auto_unlock SET last_run_at = datetime('now') WHERE user_id = ?",
+        (user_id,),
+    )
+
+
+def get_auto_unlock_interval(user_id: int) -> float:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COALESCE(interval_hours, 3.0) FROM auto_unlock WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    return row[0] if row else 3.0
+
+
+def set_auto_unlock_interval(user_id: int, hours: float):
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE auto_unlock SET interval_hours = ? WHERE user_id = ?",
+        (hours, user_id),
+    )
