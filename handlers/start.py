@@ -1,16 +1,20 @@
+import asyncio
+
 from aiogram import Router
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 
 from api.accountsops import get_dashboard, get_all_pets, filter_pets
+from api.faceunlock import get_balance
 from database import (
     get_panel, save_panel,
     get_alert, set_alert, toggle_alert,
     save_pet_snapshot, get_pets_farmed,
     get_watched_pets, add_watched_pet, remove_watched_pet,
+    get_zp_key,
 )
 from keyboards import (
     stats_kb, settings_kb, alerts_kb, cancel_kb, back_kb,
@@ -83,8 +87,17 @@ async def build_stats_text(user_id: int) -> str:
     if not api_key:
         return "❌ API ключ не настроен.\n\nОтправь /start чтобы подключить."
 
-    ok_d, dash, err_d = await get_dashboard(api_key)
-    ok_p, all_pets, _ = await get_all_pets(api_key)
+    zp_key = get_zp_key(user_id)
+
+    # Fetch everything concurrently
+    coros = [get_dashboard(api_key), get_all_pets(api_key)]
+    if zp_key:
+        coros.append(get_balance(zp_key))
+    results = await asyncio.gather(*coros)
+
+    ok_d, dash, err_d = results[0]
+    ok_p, all_pets, _ = results[1]
+    ok_zp, zp_bal, _  = results[2] if zp_key else (False, {}, "")
 
     status = "🟢 AccountsOps" if ok_d else "🔴 AccountsOps"
     lines  = [f"📊 <b>OxySync</b>\n{status}"]
@@ -99,6 +112,14 @@ async def build_stats_text(user_id: int) -> str:
         lines.append(f"  👥  ✅ {active}   💤 {total_passive}   ⚠️ {unstable}")
     else:
         lines.append(f"\n❌ {err_d}")
+
+    if ok_zp:
+        eff = zp_bal.get("effective", 0)
+        res = zp_bal.get("reserved", 0)
+        zp_line = f"  💰 ZP: <b>${eff:.2f}</b>"
+        if res > 0:
+            zp_line += f"  (резерв: ${res:.2f})"
+        lines.append(zp_line)
 
     if ok_p and all_pets:
         save_pet_snapshot(user_id, all_pets)
@@ -384,6 +405,38 @@ async def pet_add(callback: CallbackQuery, state: FSMContext):
         "✅ = уже в списке  |  Нажми чтобы добавить / убрать",
         parse_mode="HTML",
         reply_markup=pets_add_kb(available),
+    )
+
+
+@router.message(Command("card"))
+async def cmd_card(message: Message):
+    user_id = message.from_user.id
+    api_key = get_panel(user_id)
+    if not api_key:
+        await message.answer("❌ API ключ не настроен. Запусти /start")
+        return
+
+    msg = await message.answer("📊 Генерирую...")
+    ok, all_pets, _ = await get_all_pets(api_key)
+    if not ok or not all_pets:
+        await msg.edit_text("❌ Нет данных о петах.")
+        return
+
+    watched_kinds = {pk for pk, _ in get_watched_pets(user_id)}
+    display = (
+        {k: v for k, v in all_pets.items() if k in watched_kinds}
+        if watched_kinds else all_pets
+    )
+    period_diffs = {
+        label: get_pets_farmed(user_id, display, hours)
+        for hours, label in PERIODS
+    }
+    png = build_pets_image(display, period_diffs)
+    await msg.delete()
+    await message.answer_photo(
+        BufferedInputFile(png, filename="pets.png"),
+        caption="🐾 <b>Pet Stats</b>",
+        parse_mode="HTML",
     )
 
 

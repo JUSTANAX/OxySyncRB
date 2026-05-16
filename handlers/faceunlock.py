@@ -1,4 +1,5 @@
 from aiogram import Router, Bot
+from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -361,6 +362,55 @@ async def fu_auto_toggle(callback: CallbackQuery):
     status = "включён ✅" if new_val else "выключен ❌"
     await callback.answer(f"🔁 Авто-цикл {status}", show_alert=False)
     await _show_fu(callback.message, user_id, edit=True)
+
+
+# ─── /unlock — шорткат ───────────────────────────────────────────────────────
+
+@router.message(Command("unlock"))
+async def cmd_unlock(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    ao_key  = get_panel(user_id)
+    zp_key  = get_zp_key(user_id)
+
+    if not ao_key:
+        await message.answer(
+            "❌ AccountsOps не подключён.\n"
+            "Настрой через /start → Настройки."
+        )
+        return
+    if not zp_key:
+        await message.answer(
+            "❌ ZeroPoint API ключ не подключён.\n"
+            "Настрой через /start → Автоматизация → Auto-Unlock-Face."
+        )
+        return
+
+    job_id = get_zp_job(user_id)
+    if job_id:
+        ok_s, st, _ = await get_status(zp_key, job_id)
+        if ok_s and st.get("status") in ("pending", "processing"):
+            await message.answer("⚠️ Уже есть активная задача разблокировки.")
+            return
+
+    msg = await message.answer("⏳ Ищу аккаунты с тегом <code>status:face</code>...", parse_mode="HTML")
+    ok, accounts, err = await get_face_accounts(ao_key)
+    if not ok:
+        await msg.edit_text(f"❌ Ошибка AccountsOps: {err}")
+        return
+    if not accounts:
+        await msg.edit_text("✅ Аккаунтов с тегом <code>status:face</code> не найдено.", parse_mode="HTML")
+        return
+
+    # Reuse the existing fu_confirm handler via FSM state
+    await state.set_state(FUStates.confirming_run)
+    await state.update_data(accounts_text="\n".join(accounts))
+    await msg.edit_text(
+        f"🔓 <b>/unlock</b>\n\n"
+        f"Найдено <b>{len(accounts)}</b> аккаунтов с тегом <code>status:face</code>.\n\n"
+        "Отправить на разблокировку через ZeroPoint?",
+        parse_mode="HTML",
+        reply_markup=fu_confirm_kb(len(accounts)),
+    )
 
 
 # ─── Face Unlock — интервал авто-цикла ───────────────────────────────────────
