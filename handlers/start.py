@@ -5,6 +5,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 
+from aiogram.types import BufferedInputFile
+
 from api.accountsops import get_dashboard, get_all_pets, filter_pets
 from database import (
     get_panel, save_panel,
@@ -13,6 +15,7 @@ from database import (
 )
 from keyboards import stats_kb, settings_kb, alerts_kb, cancel_kb, back_kb
 from state_cache import save_stats_msg, clear_stats_msg
+from charts import build_pets_image
 
 PERIODS = [
     (1,   "1ч"),
@@ -261,4 +264,33 @@ async def receive_threshold(message: Message, state: FSMContext):
         f"✅ Порог установлен: <b>{row[0]}</b> аккаунтов",
         parse_mode="HTML",
         reply_markup=alerts_kb(row[0], bool(row[1])),
+    )
+
+
+# ─── Карточка петов ───────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "pets_card")
+async def on_pets_card(callback: CallbackQuery):
+    await callback.answer("📊 Генерирую...")
+    user_id = callback.from_user.id
+    api_key = get_panel(user_id)
+    if not api_key:
+        await callback.answer("❌ API ключ не настроен.", show_alert=True)
+        return
+
+    ok, all_pets, _ = await get_all_pets(api_key)
+    if not ok or not all_pets:
+        await callback.answer("❌ Нет данных о петах.", show_alert=True)
+        return
+
+    period_diffs = {
+        label: get_pets_farmed(user_id, all_pets, hours)
+        for hours, label in PERIODS
+    }
+
+    png = build_pets_image(all_pets, period_diffs)
+    await callback.message.answer_photo(
+        BufferedInputFile(png, filename="pets.png"),
+        caption="🐾 <b>Pet Stats</b>",
+        parse_mode="HTML",
     )

@@ -5,6 +5,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 def stats_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")],
+        [InlineKeyboardButton(text="📊 Карточка петов", callback_data="pets_card")],
         [
             InlineKeyboardButton(text="🔔 Уведомления",   callback_data="alerts"),
             InlineKeyboardButton(text="🔧 Настройки",     callback_data="settings"),
