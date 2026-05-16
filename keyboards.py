@@ -5,7 +5,10 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 def stats_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")],
-        [InlineKeyboardButton(text="📊 Карточка петов", callback_data="pets_card")],
+        [
+            InlineKeyboardButton(text="📊 Карточка петов", callback_data="pets_card"),
+            InlineKeyboardButton(text="🐾 Трекинг",        callback_data="pets_mgmt"),
+        ],
         [
             InlineKeyboardButton(text="🔔 Уведомления",   callback_data="alerts"),
             InlineKeyboardButton(text="🔧 Настройки",     callback_data="settings"),
@@ -129,3 +132,35 @@ def back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back")]
     ])
+
+
+# ─── Трекинг петов ────────────────────────────────────────────────────────────
+
+def pets_mgmt_kb(watched: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    """watched = [(pet_kind, label), ...]"""
+    rows = []
+    for pet_kind, label in watched:
+        rows.append([InlineKeyboardButton(
+            text=f"❌  {label}",
+            callback_data=f"pet_rm:{pet_kind}",
+        )])
+    rows.append([InlineKeyboardButton(text="➕ Добавить пета", callback_data="pet_add")])
+    rows.append([InlineKeyboardButton(text="🔙 Назад",         callback_data="back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def pets_add_kb(available: list[tuple[str, str, bool]]) -> InlineKeyboardMarkup:
+    """available = [(pet_kind, label, is_watched), ...]  — shown as 2-column grid."""
+    rows = []
+    for i in range(0, len(available), 2):
+        row = []
+        for pet_kind, label, is_watched in available[i : i + 2]:
+            short = label if len(label) <= 16 else label[:15] + "…"
+            prefix = "✅ " if is_watched else ""
+            row.append(InlineKeyboardButton(
+                text=f"{prefix}{short}",
+                callback_data=f"pet_toggle:{pet_kind}",
+            ))
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="pets_mgmt")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)

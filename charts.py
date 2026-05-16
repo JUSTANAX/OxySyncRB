@@ -67,27 +67,26 @@ def _diff_color(val: int | None) -> tuple:
     return _GREEN
 
 
-# ── Layout constants ──────────────────────────────────────────────────────────
-_PAD      = 22
-_HEADER_H = 68
-_TH_H     = 42
-_ROW_H    = 52
-_FOOTER_H = 28
+# ── Layout — 3 periods, large fonts ──────────────────────────────────────────
+_PAD      = 28
+_HEADER_H = 84
+_TH_H     = 52
+_ROW_H    = 68
+_FOOTER_H = 36
 
-# (x_offset_from_content, width, header_label, align)
+# (x_offset, width, header_label, align)
 _COLS = [
-    (0,   188, "Пет",   "left"),
-    (188,  72, "Кол",   "right"),
-    (260,  66, "+1ч",   "right"),
-    (326,  74, "+12ч",  "right"),
-    (400,  74, "+24ч",  "right"),
-    (474,  66, "+3д",   "right"),
-    (540,  74, "+7д",   "right"),
+    (0,   224, "Пет",   "left"),
+    (224,  88, "Кол",   "right"),
+    (312,  90, "+1ч",   "right"),
+    (402,  98, "+24ч",  "right"),
+    (500,  94, "+7д",   "right"),
 ]
-_CONTENT_W = 614
-_WIDTH     = _CONTENT_W + 2 * _PAD  # 658
+_CONTENT_W = 594
+_WIDTH     = _CONTENT_W + 2 * _PAD   # 650
 
-_PERIODS = ["1ч", "12ч", "24ч", "3д", "7д"]
+# Only the three most useful periods (card is compact — text stats still show all 5)
+_PERIODS = ["1ч", "24ч", "7д"]
 
 
 # ── Main function ─────────────────────────────────────────────────────────────
@@ -100,32 +99,26 @@ def build_pets_image(pets: dict, period_diffs: dict) -> bytes:
     Returns PNG bytes ready to pass to BufferedInputFile.
     """
     def _sort_key(item):
-        kind, d = item
+        _, d = item
         n = d["name"].lower()
-        if "dragon" in n and not d["is_egg"]:
-            g = 0
-        elif "dragon" in n and d["is_egg"]:
-            g = 1
-        elif "unicorn" in n and not d["is_egg"]:
-            g = 2
-        else:
-            g = 3
+        if   "dragon"  in n and not d["is_egg"]: g = 0
+        elif "dragon"  in n and     d["is_egg"]: g = 1
+        elif "unicorn" in n and not d["is_egg"]: g = 2
+        else:                                    g = 3
         return (g, -d["quantity"])
 
     rows = sorted(pets.items(), key=_sort_key)
-    n    = len(rows)
-    if n == 0:
-        n = 1  # still render the "no pets" skeleton
+    n    = max(len(rows), 1)
 
     height = _PAD + _HEADER_H + _TH_H + n * _ROW_H + _FOOTER_H + _PAD
     img  = Image.new("RGB", (_WIDTH, height), _BG)
     draw = ImageDraw.Draw(img)
 
-    f_title  = _font(23, bold=True)
-    f_th     = _font(15, bold=True)
-    f_name   = _font(16)
-    f_num    = _font(16, bold=True)
-    f_foot   = _font(12)
+    f_title = _font(28, bold=True)
+    f_th    = _font(19, bold=True)
+    f_name  = _font(21)
+    f_num   = _font(21, bold=True)
+    f_foot  = _font(14)
 
     # ── Header bar ──────────────────────────────────────────────────────────
     draw.rectangle([0, 0, _WIDTH, _HEADER_H], fill=_HDR_BG)
@@ -142,55 +135,50 @@ def build_pets_image(pets: dict, period_diffs: dict) -> bytes:
         cx = _PAD + col_x
         cy = y_th + _TH_H // 2
         if align == "right":
-            draw.text((cx + col_w - 4, cy), label, font=f_th, fill=_DIM, anchor="rm")
+            draw.text((cx + col_w - 6, cy), label, font=f_th, fill=_DIM, anchor="rm")
         else:
-            draw.text((cx + 18, cy), label, font=f_th, fill=_DIM, anchor="lm")
+            draw.text((cx + 20, cy), label, font=f_th, fill=_DIM, anchor="lm")
     draw.line([0, y_th + _TH_H, _WIDTH, y_th + _TH_H], fill=_BORDER, width=1)
 
     # ── Data rows ────────────────────────────────────────────────────────────
     if not rows:
-        y = _HEADER_H + _TH_H + _ROW_H // 2
-        draw.text((_WIDTH // 2, y), "Нет данных о петах", font=f_name, fill=_DIM, anchor="mm")
+        cy = _HEADER_H + _TH_H + _ROW_H // 2
+        draw.text((_WIDTH // 2, cy), "Нет данных", font=f_name, fill=_DIM, anchor="mm")
     else:
         for i, (kind, data) in enumerate(rows):
             y_row  = _HEADER_H + _TH_H + i * _ROW_H
-            row_bg = _ROW[i % 2]
-            draw.rectangle([0, y_row, _WIDTH, y_row + _ROW_H], fill=row_bg)
+            draw.rectangle([0, y_row, _WIDTH, y_row + _ROW_H], fill=_ROW[i % 2])
+            cy        = y_row + _ROW_H // 2
+            pet_color = _pet_color(data["name"], data["is_egg"])
 
-            cy         = y_row + _ROW_H // 2
-            pet_color  = _pet_color(data["name"], data["is_egg"])
+            # Colored dot indicator
+            r = 6
+            draw.ellipse([_PAD + 2, cy - r, _PAD + 2 + r * 2, cy + r], fill=pet_color)
 
-            # Colored dot
-            r = 5
-            draw.ellipse(
-                [_PAD + 3, cy - r, _PAD + 3 + r * 2, cy + r],
-                fill=pet_color,
-            )
-
-            # Pet name (truncated)
+            # Pet name
             name = data["name"]
-            if len(name) > 19:
-                name = name[:18] + "…"
-            draw.text((_PAD + 16, cy), name, font=f_name, fill=_WHITE, anchor="lm")
+            if len(name) > 18:
+                name = name[:17] + "…"
+            draw.text((_PAD + 18, cy), name, font=f_name, fill=_WHITE, anchor="lm")
 
             # Quantity
-            cx = _PAD + _COLS[1][0] + _COLS[1][1] - 4
-            draw.text((cx, cy), str(data["quantity"]), font=f_num, fill=_WHITE, anchor="rm")
+            col_x, col_w = _COLS[1][0], _COLS[1][1]
+            draw.text((_PAD + col_x + col_w - 6, cy), str(data["quantity"]),
+                      font=f_num, fill=_WHITE, anchor="rm")
 
-            # Period diffs
+            # Diffs
             for j, label in enumerate(_PERIODS):
                 col_x, col_w = _COLS[2 + j][0], _COLS[2 + j][1]
                 diffs = period_diffs.get(label)
                 val   = None if diffs is None else diffs.get(kind, 0)
                 draw.text(
-                    (_PAD + col_x + col_w - 4, cy),
+                    (_PAD + col_x + col_w - 6, cy),
                     _fmt_diff(val),
                     font=f_name,
                     fill=_diff_color(val),
                     anchor="rm",
                 )
 
-            # Row separator
             if i < n - 1:
                 draw.line(
                     [_PAD, y_row + _ROW_H - 1, _WIDTH - _PAD, y_row + _ROW_H - 1],

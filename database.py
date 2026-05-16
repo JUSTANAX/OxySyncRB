@@ -55,6 +55,13 @@ def init_db():
             interval_hours REAL DEFAULT 3.0,
             last_run_at    TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS watched_pets (
+            user_id  INTEGER,
+            pet_kind TEXT,
+            label    TEXT NOT NULL,
+            PRIMARY KEY (user_id, pet_kind)
+        );
     """)
     # Migrations for existing databases
     for stmt in (
@@ -287,4 +294,31 @@ def set_auto_unlock_interval(user_id: int, hours: float):
     conn.execute(
         "UPDATE auto_unlock SET interval_hours = ? WHERE user_id = ?",
         (hours, user_id),
+    )
+
+
+# ─── Watched pets ─────────────────────────────────────────────────────────────
+
+def get_watched_pets(user_id: int) -> list[tuple[str, str]]:
+    """Returns [(pet_kind, label)] sorted by label."""
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT pet_kind, label FROM watched_pets WHERE user_id = ? ORDER BY label",
+        (user_id,),
+    ).fetchall()
+
+
+def add_watched_pet(user_id: int, pet_kind: str, label: str):
+    conn = _get_conn()
+    conn.execute(
+        "INSERT OR REPLACE INTO watched_pets (user_id, pet_kind, label) VALUES (?, ?, ?)",
+        (user_id, pet_kind, label),
+    )
+
+
+def remove_watched_pet(user_id: int, pet_kind: str):
+    conn = _get_conn()
+    conn.execute(
+        "DELETE FROM watched_pets WHERE user_id = ? AND pet_kind = ?",
+        (user_id, pet_kind),
     )
