@@ -128,7 +128,7 @@ async def build_stats_text(user_id: int) -> str:
 
         display = {
             k: v for k, v in all_pets.items()
-            if any(f.lower() in v["name"].lower() for f in watched_filters)
+            if any(f.lower() == v["name"].lower() for f in watched_filters)
         }
 
         period_diffs = {
@@ -317,7 +317,7 @@ async def _send_pets_card(target, user_id: int):
     watched_filters = get_watched_pets(user_id)
     display = (
         {k: v for k, v in all_pets.items()
-         if any(f.lower() in v["name"].lower() for f in watched_filters)}
+         if any(f.lower() == v["name"].lower() for f in watched_filters)}
         if watched_filters else all_pets
     )
 
@@ -353,16 +353,14 @@ def _pets_mgmt_text(filters: list[str]) -> str:
     if not filters:
         return (
             "🐾 <b>Трекинг петов</b>\n\n"
-            "Фильтров нет — петы на главном экране не показываются.\n\n"
-            "Нажми <b>➕ Добавить</b> и введи часть названия пета\n"
-            "(например: <code>Dragon</code>, <code>Unicorn</code>, <code>Wyvern</code>)."
+            "Список пуст — петы на главном экране не показываются.\n\n"
+            "Нажми <b>➕ Добавить</b> и введи точное название пета."
         )
     names = "\n".join(f"  • {f}" for f in filters)
     return (
         f"🐾 <b>Трекинг петов</b>\n\n"
-        f"Активные фильтры:\n{names}\n\n"
-        "Показываются петы, в названии которых есть это слово.\n"
-        "Нажми на фильтр чтобы удалить его."
+        f"Отслеживаемые петы:\n{names}\n\n"
+        "Нажми на пета чтобы удалить его из списка."
     )
 
 
@@ -399,13 +397,9 @@ async def pet_rm(callback: CallbackQuery):
 async def pet_add_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(States.waiting_pet_filter)
     await callback.message.edit_text(
-        "🐾 <b>Добавить фильтр</b>\n\n"
-        "Введи часть названия пета для отслеживания.\n\n"
-        "Примеры:\n"
-        "  • <code>Dragon</code> — все драконы\n"
-        "  • <code>Unicorn</code> — все единороги\n"
-        "  • <code>Wyvern</code> — только вайверны\n"
-        "  • <code>Egg</code> — все яйца",
+        "🐾 <b>Добавить пета</b>\n\n"
+        "Введи точное название пета (буква в букву, регистр не важен).\n\n"
+        "Пример: <code>Dragon Wyvern</code>",
         parse_mode="HTML",
         reply_markup=cancel_kb("pets_mgmt"),
     )
