@@ -16,10 +16,7 @@ from database import (
     get_watched_pets, add_watched_pet, remove_watched_pet,
     get_zp_key,
 )
-from keyboards import (
-    stats_kb, settings_kb, alerts_kb, cancel_kb, back_kb,
-    pets_mgmt_kb, pets_add_kb,
-)
+from keyboards import stats_kb, settings_kb, alerts_kb, cancel_kb, back_kb, pets_mgmt_kb
 from state_cache import save_stats_msg, clear_stats_msg
 from charts import build_pets_image
 
@@ -35,8 +32,13 @@ router = Router()
 
 
 class States(StatesGroup):
-    waiting_key       = State()
-    waiting_threshold = State()
+    waiting_key        = State()
+    waiting_threshold  = State()
+    waiting_pet_filter = State()
+
+
+async def _skip():
+    return False, {}, ""
 
 
 # ─── /start ──────────────────────────────────────────────────────────────────
@@ -87,17 +89,17 @@ async def build_stats_text(user_id: int) -> str:
     if not api_key:
         return "❌ API ключ не настроен.\n\nОтправь /start чтобы подключить."
 
-    zp_key = get_zp_key(user_id)
+    zp_key          = get_zp_key(user_id)
+    watched_filters = get_watched_pets(user_id)
 
-    # Fetch everything concurrently
-    coros = [get_dashboard(api_key), get_all_pets(api_key)]
-    if zp_key:
-        coros.append(get_balance(zp_key))
-    results = await asyncio.gather(*coros)
+    # Fetch concurrently; skip get_all_pets entirely when no filters are set
+    ok_d, dash, err_d = (False, {}, "")
+    ok_zp, zp_bal, _  = (False, {}, "")
+    ok_p, all_pets, _ = (False, {}, "")
 
-    ok_d, dash, err_d = results[0]
-    ok_p, all_pets, _ = results[1]
-    ok_zp, zp_bal, _  = results[2] if zp_key else (False, {}, "")
+    ok_d, dash, err_d, ok_zp, zp_bal, ok_p, all_pets = (
+        await _gather_stats(api_key, zp_key, watched_filters)
+    )
 
     status = "🟢 AccountsOps" if ok_d else "🔴 AccountsOps"
     lines  = [f"📊 <b>OxySync</b>\n{status}"]
@@ -114,22 +116,20 @@ async def build_stats_text(user_id: int) -> str:
         lines.append(f"\n❌ {err_d}")
 
     if ok_zp:
-        eff = zp_bal.get("effective", 0)
-        res = zp_bal.get("reserved", 0)
+        eff     = zp_bal.get("effective", 0)
+        res     = zp_bal.get("reserved",  0)
         zp_line = f"  💰 ZP: <b>${eff:.2f}</b>"
         if res > 0:
             zp_line += f"  (резерв: ${res:.2f})"
         lines.append(zp_line)
 
-    if ok_p and all_pets:
+    if ok_p and all_pets and watched_filters:
         save_pet_snapshot(user_id, all_pets)
 
-        # Filter to watched pets if user has set any
-        watched_kinds = {pk for pk, _ in get_watched_pets(user_id)}
-        display = (
-            {k: v for k, v in all_pets.items() if k in watched_kinds}
-            if watched_kinds else all_pets
-        )
+        display = {
+            k: v for k, v in all_pets.items()
+            if any(f.lower() in v["name"].lower() for f in watched_filters)
+        }
 
         period_diffs = {
             label: get_pets_farmed(user_id, display, hours)
@@ -144,7 +144,6 @@ async def build_stats_text(user_id: int) -> str:
             for kind, data in sorted(category.items(), key=lambda x: -x[1]["quantity"]):
                 egg = " 🥚" if data["is_egg"] else ""
                 pet_lines.append(f"  {emoji} {data['name']}{egg} × {data['quantity']}")
-
                 stat_parts = []
                 for _, label in PERIODS:
                     diffs = period_diffs.get(label)
@@ -155,12 +154,23 @@ async def build_stats_text(user_id: int) -> str:
                 pet_lines.append("    " + "  ·  ".join(stat_parts))
 
         if pet_lines:
-            suffix = f" (фильтр: {len(watched_kinds)})" if watched_kinds else ""
             lines.append("")
-            lines.append(f"  🐾 <b>Петы</b>{suffix}")
+            lines.append(f"  🐾 <b>Петы</b> (фильтр: {len(watched_filters)})")
             lines.extend(pet_lines)
 
     return "\n".join(lines)
+
+
+async def _gather_stats(api_key: str, zp_key: str | None, watched_filters: list[str]):
+    results = await asyncio.gather(
+        get_dashboard(api_key),
+        get_balance(zp_key) if zp_key else _skip(),
+        get_all_pets(api_key) if watched_filters else _skip(),
+    )
+    ok_d,  dash,     err_d = results[0]
+    ok_zp, zp_bal,   _     = results[1]
+    ok_p,  all_pets, _     = results[2]
+    return ok_d, dash, err_d, ok_zp, zp_bal, ok_p, all_pets
 
 
 async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
@@ -257,9 +267,7 @@ async def on_alert_toggle(callback: CallbackQuery):
     enabled = toggle_alert(callback.from_user.id)
     row = get_alert(callback.from_user.id)
     threshold = row[0] if row else None
-    await callback.message.edit_reply_markup(
-        reply_markup=alerts_kb(threshold, enabled)
-    )
+    await callback.message.edit_reply_markup(reply_markup=alerts_kb(threshold, enabled))
     await callback.answer("✅ Включено" if enabled else "❌ Выключено")
 
 
@@ -280,10 +288,8 @@ async def receive_threshold(message: Message, state: FSMContext):
     text = message.text.strip()
     await message.delete()
     if not text.isdigit() or int(text) <= 0:
-        await message.answer(
-            "❌ Введи целое положительное число:",
-            reply_markup=cancel_kb("alerts"),
-        )
+        await message.answer("❌ Введи целое положительное число:",
+                             reply_markup=cancel_kb("alerts"))
         return
     set_alert(message.from_user.id, int(text))
     await state.clear()
@@ -297,24 +303,22 @@ async def receive_threshold(message: Message, state: FSMContext):
 
 # ─── Карточка петов ───────────────────────────────────────────────────────────
 
-@router.callback_query(lambda c: c.data == "pets_card")
-async def on_pets_card(callback: CallbackQuery):
-    await callback.answer("📊 Генерирую...")
-    user_id = callback.from_user.id
+async def _send_pets_card(target, user_id: int):
     api_key = get_panel(user_id)
     if not api_key:
-        await callback.answer("❌ API ключ не настроен.", show_alert=True)
+        await target.answer("❌ API ключ не настроен.")
         return
 
     ok, all_pets, _ = await get_all_pets(api_key)
     if not ok or not all_pets:
-        await callback.answer("❌ Нет данных о петах.", show_alert=True)
+        await target.answer("❌ Нет данных о петах.")
         return
 
-    watched_kinds = {pk for pk, _ in get_watched_pets(user_id)}
+    watched_filters = get_watched_pets(user_id)
     display = (
-        {k: v for k, v in all_pets.items() if k in watched_kinds}
-        if watched_kinds else all_pets
+        {k: v for k, v in all_pets.items()
+         if any(f.lower() in v["name"].lower() for f in watched_filters)}
+        if watched_filters else all_pets
     )
 
     period_diffs = {
@@ -323,147 +327,107 @@ async def on_pets_card(callback: CallbackQuery):
     }
 
     png = build_pets_image(display, period_diffs)
-    await callback.message.answer_photo(
+    await target.answer_document(
         BufferedInputFile(png, filename="pets.png"),
         caption="🐾 <b>Pet Stats</b>",
         parse_mode="HTML",
     )
 
 
+@router.callback_query(lambda c: c.data == "pets_card")
+async def on_pets_card(callback: CallbackQuery):
+    await callback.answer("📊 Генерирую...")
+    await _send_pets_card(callback.message, callback.from_user.id)
+
+
+@router.message(Command("card"))
+async def cmd_card(message: Message):
+    msg = await message.answer("📊 Генерирую...")
+    await _send_pets_card(message, message.from_user.id)
+    await msg.delete()
+
+
 # ─── Трекинг петов — управление ──────────────────────────────────────────────
 
-def _pets_mgmt_text(watched: list[tuple[str, str]]) -> str:
-    if not watched:
+def _pets_mgmt_text(filters: list[str]) -> str:
+    if not filters:
         return (
             "🐾 <b>Трекинг петов</b>\n\n"
-            "Список пуст — в статистике показываются все петы.\n\n"
-            "Нажми <b>➕ Добавить пета</b> чтобы выбрать конкретных."
+            "Фильтров нет — петы на главном экране не показываются.\n\n"
+            "Нажми <b>➕ Добавить</b> и введи часть названия пета\n"
+            "(например: <code>Dragon</code>, <code>Unicorn</code>, <code>Wyvern</code>)."
         )
-    names = "\n".join(f"  • {label}" for _, label in watched)
+    names = "\n".join(f"  • {f}" for f in filters)
     return (
         f"🐾 <b>Трекинг петов</b>\n\n"
-        f"В статистике и карточке отображаются только:\n{names}\n\n"
-        "Нажми на пета чтобы убрать его из списка."
+        f"Активные фильтры:\n{names}\n\n"
+        "Показываются петы, в названии которых есть это слово.\n"
+        "Нажми на фильтр чтобы удалить его."
     )
 
 
 @router.callback_query(lambda c: c.data == "pets_mgmt")
 async def open_pets_mgmt(callback: CallbackQuery, state: FSMContext):
     clear_stats_msg(callback.from_user.id)
-    await state.update_data(pet_add_cache=None)
-    watched = get_watched_pets(callback.from_user.id)
+    await state.clear()
+    filters = get_watched_pets(callback.from_user.id)
     await callback.message.edit_text(
-        _pets_mgmt_text(watched),
+        _pets_mgmt_text(filters),
         parse_mode="HTML",
-        reply_markup=pets_mgmt_kb(watched),
+        reply_markup=pets_mgmt_kb(filters),
     )
     await callback.answer()
 
 
 @router.callback_query(lambda c: c.data.startswith("pet_rm:"))
 async def pet_rm(callback: CallbackQuery):
-    user_id  = callback.from_user.id
-    pet_kind = callback.data[len("pet_rm:"):]
-    remove_watched_pet(user_id, pet_kind)
-    await callback.answer("❌ Убран из трекинга")
-    watched = get_watched_pets(user_id)
+    user_id     = callback.from_user.id
+    filter_text = callback.data[len("pet_rm:"):]
+    remove_watched_pet(user_id, filter_text)
+    await callback.answer(f'❌ Фильтр "{filter_text}" удалён')
+    filters = get_watched_pets(user_id)
     await callback.message.edit_text(
-        _pets_mgmt_text(watched),
+        _pets_mgmt_text(filters),
         parse_mode="HTML",
-        reply_markup=pets_mgmt_kb(watched),
+        reply_markup=pets_mgmt_kb(filters),
     )
 
 
-# ─── Трекинг петов — экран добавления ────────────────────────────────────────
+# ─── Трекинг петов — добавление через текст ──────────────────────────────────
 
 @router.callback_query(lambda c: c.data == "pet_add")
-async def pet_add(callback: CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    api_key = get_panel(user_id)
-    if not api_key:
-        await callback.answer("❌ API не настроен.", show_alert=True)
-        return
-
-    await callback.answer("⏳")
-    ok, all_pets, _ = await get_all_pets(api_key)
-    if not ok or not all_pets:
-        await callback.answer("❌ Нет данных о петах.", show_alert=True)
-        return
-
-    # Cache so pet_toggle doesn't need to re-fetch
-    cache = {k: {"name": d["name"], "quantity": d["quantity"]} for k, d in all_pets.items()}
-    await state.update_data(pet_add_cache=cache)
-
-    watched_set = {pk for pk, _ in get_watched_pets(user_id)}
-    available = [
-        (kind, info["name"], kind in watched_set)
-        for kind, info in sorted(cache.items(), key=lambda x: -x[1]["quantity"])
-    ]
-
+async def pet_add_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(States.waiting_pet_filter)
     await callback.message.edit_text(
-        "🐾 <b>Выбери петов для трекинга</b>\n\n"
-        "✅ = уже в списке  |  Нажми чтобы добавить / убрать",
+        "🐾 <b>Добавить фильтр</b>\n\n"
+        "Введи часть названия пета для отслеживания.\n\n"
+        "Примеры:\n"
+        "  • <code>Dragon</code> — все драконы\n"
+        "  • <code>Unicorn</code> — все единороги\n"
+        "  • <code>Wyvern</code> — только вайверны\n"
+        "  • <code>Egg</code> — все яйца",
         parse_mode="HTML",
-        reply_markup=pets_add_kb(available),
+        reply_markup=cancel_kb("pets_mgmt"),
     )
+    await callback.answer()
 
 
-@router.message(Command("card"))
-async def cmd_card(message: Message):
-    user_id = message.from_user.id
-    api_key = get_panel(user_id)
-    if not api_key:
-        await message.answer("❌ API ключ не настроен. Запусти /start")
+@router.message(States.waiting_pet_filter)
+async def receive_pet_filter(message: Message, state: FSMContext):
+    text = message.text.strip()
+    await message.delete()
+    if not text or len(text) < 2:
+        await message.answer(
+            "❌ Слишком короткое название. Введи хотя бы 2 символа:",
+            reply_markup=cancel_kb("pets_mgmt"),
+        )
         return
 
-    msg = await message.answer("📊 Генерирую...")
-    ok, all_pets, _ = await get_all_pets(api_key)
-    if not ok or not all_pets:
-        await msg.edit_text("❌ Нет данных о петах.")
-        return
-
-    watched_kinds = {pk for pk, _ in get_watched_pets(user_id)}
-    display = (
-        {k: v for k, v in all_pets.items() if k in watched_kinds}
-        if watched_kinds else all_pets
-    )
-    period_diffs = {
-        label: get_pets_farmed(user_id, display, hours)
-        for hours, label in PERIODS
-    }
-    png = build_pets_image(display, period_diffs)
-    await msg.delete()
-    await message.answer_photo(
-        BufferedInputFile(png, filename="pets.png"),
-        caption="🐾 <b>Pet Stats</b>",
+    add_watched_pet(message.from_user.id, text)
+    await state.clear()
+    filters = get_watched_pets(message.from_user.id)
+    await message.answer(
+        f'✅ Фильтр <b>"{text}"</b> добавлен.\n\n' + _pets_mgmt_text(filters),
         parse_mode="HTML",
+        reply_markup=pets_mgmt_kb(filters),
     )
-
-
-@router.callback_query(lambda c: c.data.startswith("pet_toggle:"))
-async def pet_toggle(callback: CallbackQuery, state: FSMContext):
-    user_id  = callback.from_user.id
-    pet_kind = callback.data[len("pet_toggle:"):]
-
-    watched_set = {pk for pk, _ in get_watched_pets(user_id)}
-    fsmdata     = await state.get_data()
-    cache: dict = fsmdata.get("pet_add_cache") or {}
-
-    if pet_kind in watched_set:
-        remove_watched_pet(user_id, pet_kind)
-        await callback.answer("❌ Убран")
-    else:
-        label = (cache.get(pet_kind) or {}).get("name") or pet_kind
-        add_watched_pet(user_id, pet_kind, label)
-        await callback.answer("✅ Добавлен")
-
-    # Refresh keyboard from cache (no extra API call)
-    new_watched = {pk for pk, _ in get_watched_pets(user_id)}
-    available = [
-        (kind, info["name"], kind in new_watched)
-        for kind, info in sorted(cache.items(), key=lambda x: -x[1]["quantity"])
-    ]
-    try:
-        await callback.message.edit_reply_markup(reply_markup=pets_add_kb(available))
-    except TelegramBadRequest:
-        pass

@@ -136,31 +136,15 @@ def back_kb() -> InlineKeyboardMarkup:
 
 # ─── Трекинг петов ────────────────────────────────────────────────────────────
 
-def pets_mgmt_kb(watched: list[tuple[str, str]]) -> InlineKeyboardMarkup:
-    """watched = [(pet_kind, label), ...]"""
+def pets_mgmt_kb(filters: list[str]) -> InlineKeyboardMarkup:
+    """filters = list of filter strings the user has set."""
     rows = []
-    for pet_kind, label in watched:
+    for f in filters:
+        label = f if len(f) <= 28 else f[:27] + "…"
         rows.append([InlineKeyboardButton(
             text=f"❌  {label}",
-            callback_data=f"pet_rm:{pet_kind}",
+            callback_data=f"pet_rm:{f}",
         )])
-    rows.append([InlineKeyboardButton(text="➕ Добавить пета", callback_data="pet_add")])
-    rows.append([InlineKeyboardButton(text="🔙 Назад",         callback_data="back")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def pets_add_kb(available: list[tuple[str, str, bool]]) -> InlineKeyboardMarkup:
-    """available = [(pet_kind, label, is_watched), ...]  — shown as 2-column grid."""
-    rows = []
-    for i in range(0, len(available), 2):
-        row = []
-        for pet_kind, label, is_watched in available[i : i + 2]:
-            short = label if len(label) <= 16 else label[:15] + "…"
-            prefix = "✅ " if is_watched else ""
-            row.append(InlineKeyboardButton(
-                text=f"{prefix}{short}",
-                callback_data=f"pet_toggle:{pet_kind}",
-            ))
-        rows.append(row)
-    rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="pets_mgmt")])
+    rows.append([InlineKeyboardButton(text="➕ Добавить", callback_data="pet_add")])
+    rows.append([InlineKeyboardButton(text="🔙 Назад",    callback_data="back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

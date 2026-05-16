@@ -57,10 +57,9 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS watched_pets (
-            user_id  INTEGER,
-            pet_kind TEXT,
-            label    TEXT NOT NULL,
-            PRIMARY KEY (user_id, pet_kind)
+            user_id     INTEGER,
+            filter_text TEXT,
+            PRIMARY KEY (user_id, filter_text)
         );
     """)
     # Migrations for existing databases
@@ -74,6 +73,21 @@ def init_db():
             conn.execute(stmt)
         except Exception:
             pass
+
+    # Migrate watched_pets from old schema (pet_kind + label) to new (filter_text)
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(watched_pets)").fetchall()]
+        if "label" in cols:
+            conn.executescript("""
+                DROP TABLE watched_pets;
+                CREATE TABLE watched_pets (
+                    user_id     INTEGER,
+                    filter_text TEXT,
+                    PRIMARY KEY (user_id, filter_text)
+                );
+            """)
+    except Exception:
+        pass
 
 
 # ─── Panels ──────────────────────────────────────────────────────────────────
@@ -297,28 +311,28 @@ def set_auto_unlock_interval(user_id: int, hours: float):
     )
 
 
-# ─── Watched pets ─────────────────────────────────────────────────────────────
+# ─── Watched pets (filter strings) ───────────────────────────────────────────
 
-def get_watched_pets(user_id: int) -> list[tuple[str, str]]:
-    """Returns [(pet_kind, label)] sorted by label."""
+def get_watched_pets(user_id: int) -> list[str]:
+    """Returns list of filter strings (case-insensitive substrings of pet name)."""
     conn = _get_conn()
-    return conn.execute(
-        "SELECT pet_kind, label FROM watched_pets WHERE user_id = ? ORDER BY label",
+    return [r[0] for r in conn.execute(
+        "SELECT filter_text FROM watched_pets WHERE user_id = ? ORDER BY filter_text",
         (user_id,),
-    ).fetchall()
+    ).fetchall()]
 
 
-def add_watched_pet(user_id: int, pet_kind: str, label: str):
+def add_watched_pet(user_id: int, filter_text: str):
     conn = _get_conn()
     conn.execute(
-        "INSERT OR REPLACE INTO watched_pets (user_id, pet_kind, label) VALUES (?, ?, ?)",
-        (user_id, pet_kind, label),
+        "INSERT OR IGNORE INTO watched_pets (user_id, filter_text) VALUES (?, ?)",
+        (user_id, filter_text.strip()),
     )
 
 
-def remove_watched_pet(user_id: int, pet_kind: str):
+def remove_watched_pet(user_id: int, filter_text: str):
     conn = _get_conn()
     conn.execute(
-        "DELETE FROM watched_pets WHERE user_id = ? AND pet_kind = ?",
-        (user_id, pet_kind),
+        "DELETE FROM watched_pets WHERE user_id = ? AND filter_text = ?",
+        (user_id, filter_text),
     )

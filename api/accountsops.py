@@ -98,20 +98,21 @@ async def get_account_pets(api_key: str, account_id) -> tuple[bool, list, str]:
 
 
 async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
-    """Aggregate pets across all accounts.
-    Returns {pet_kind: {"quantity": N, "is_egg": bool, "name": str}}"""
+    """Aggregate pets across all accounts (concurrent per-account requests)."""
     ok, accounts, err = await get_trackstats_accounts(api_key)
     if not ok:
         return False, {}, err
     if not accounts:
         return True, {}, ""
 
+    acc_ids = [acc["id"] for acc in accounts if acc.get("id")]
+    if not acc_ids:
+        return True, {}, ""
+
+    results = await asyncio.gather(*[get_account_pets(api_key, aid) for aid in acc_ids])
+
     pets: dict = {}
-    for acc in accounts:
-        acc_id = acc.get("id")
-        if not acc_id:
-            continue
-        ok2, acc_pets, _ = await get_account_pets(api_key, acc_id)
+    for ok2, acc_pets, _ in results:
         if not ok2:
             continue
         for pet in acc_pets:
