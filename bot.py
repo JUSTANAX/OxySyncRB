@@ -7,9 +7,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import TelegramObject
 
-from config import BOT_TOKEN, OWNER_ID
+from config import BOT_TOKEN, OWNER_ID, ACCOUNTSOPS_KEY, ZP_KEY
 from database import (
     init_db,
+    save_panel, save_zp_key,
     get_users_with_alerts, update_alert_notified, set_alert_triggered,
     get_users_due_for_auto_unlock, update_auto_unlock_last_run,
     get_all_users_with_zp_jobs,
@@ -200,6 +201,10 @@ async def stats_refresh_loop(bot: Bot):
 
 async def main():
     init_db()
+    if ACCOUNTSOPS_KEY:
+        save_panel(OWNER_ID, ACCOUNTSOPS_KEY)
+    if ZP_KEY:
+        save_zp_key(OWNER_ID, ZP_KEY)
     bot = Bot(token=BOT_TOKEN)
     dp  = Dispatcher(storage=MemoryStorage())
 
