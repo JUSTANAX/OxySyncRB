@@ -9,7 +9,6 @@ from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 
 from api.accountsops import get_dashboard, get_all_pets, filter_pets
 from api.faceunlock import get_balance
-from config import DEFAULT_WATCHED_PETS
 from database import (
     get_panel, save_panel,
     get_alert, set_alert, toggle_alert,
@@ -18,6 +17,24 @@ from database import (
 )
 from keyboards import stats_kb, settings_kb, alerts_kb, cancel_kb
 from state_cache import save_stats_msg, clear_stats_msg
+
+WATCHED_PETS = [
+    "basic_egg_2022_alicorn",
+    "basic_egg_2022_ancient_dragon",
+    "basic_egg_2022_dragonfly",
+    "pet_progression_2026_purrowl",
+    "unicorn",
+    "dragon",
+    "admin_abuse_egg_2026_egg",
+    "diamond_griffin",
+    "food_pets_2026_dragonfruit_fox",
+    "golden_unicorn",
+    "pet_recycler_2025_emberlight",
+    "golden_dragon",
+    "penguins_2025_dango_penguins",
+    "admin_abuse_2025_sushi_penguin",
+    "diamond_dragon",
+]
 
 PERIODS = [
     (1,   "1ч"),
@@ -163,7 +180,7 @@ async def build_stats_text(user_id: int) -> str:
     ok_zp, zp_bal,   _     = results[1] if not isinstance(results[1], BaseException) else (False, {}, "")
     ok_p,  all_pets, _     = results[2] if not isinstance(results[2], BaseException) else (False, {}, "")
     lines = _build_lines(ok_d, dash, err_d, ok_zp, zp_bal)
-    _append_pets(lines, user_id, ok_p, all_pets, DEFAULT_WATCHED_PETS)
+    _append_pets(lines, user_id, ok_p, all_pets, WATCHED_PETS)
     return "\n".join(lines)
 
 
@@ -229,7 +246,7 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
             pass
 
         lines = _build_lines(ok_d, dash, err_d, ok_zp, zp_bal)
-        _append_pets(lines, user_id, ok_p, all_pets, DEFAULT_WATCHED_PETS)
+        _append_pets(lines, user_id, ok_p, all_pets, WATCHED_PETS)
         text = "\n".join(lines)
 
         try:
