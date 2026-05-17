@@ -15,3 +15,22 @@ ACCOUNTSOPS_KEY  = os.getenv("ACCOUNTSOPS_KEY", "")
 ZP_KEY           = os.getenv("ZP_KEY", "")
 ACCOUNTSOPS_URL  = "https://accountops.org"
 ZEROPOINT_URL    = "https://zeropoint.to"
+
+DEFAULT_WATCHED_PETS: list[str] = [
+    "Alicorn",
+    "Ancient Dragon",
+    "Blue Whale",
+    "Dango Penguins",
+    "DiamondDragon Pet",
+    "DiamondGriffin Pet",
+    "Diamond Mahi Mahi",
+    "DiamondUnicorn Pet",
+    "Dragon Fruit Fox",
+    "Dragonfly",
+    "Emberlight",
+    "GoldenDragon Pet",
+    "GoldenGriffin Pet",
+    "GoldenUnicorn Pet",
+    "Sea Turtle",
+    "Silverback Gorilla",
+]

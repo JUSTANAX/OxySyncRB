@@ -1,7 +1,7 @@
 import asyncio
 
-from aiogram import Router
-from aiogram.filters import CommandStart, Command
+from aiogram import Router, F
+from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -43,7 +43,7 @@ async def _skip():
 
 # ─── /start ──────────────────────────────────────────────────────────────────
 
-@router.message(CommandStart())
+@router.message(CommandStart(), StateFilter("*"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     if not get_panel(message.from_user.id):
@@ -210,6 +210,7 @@ async def on_refresh(callback: CallbackQuery):
 
 @router.callback_query(lambda c: c.data == "back")
 async def on_back(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     await state.clear()
     await show_stats(callback.message, callback.from_user.id, edit=True)
 
@@ -406,7 +407,7 @@ async def pet_add_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(States.waiting_pet_filter)
+@router.message(States.waiting_pet_filter, F.text)
 async def receive_pet_filter(message: Message, state: FSMContext):
     text = message.text.strip()
     await message.delete()
