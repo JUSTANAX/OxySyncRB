@@ -9,11 +9,11 @@ from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 
 from api.accountsops import get_dashboard, get_all_pets, filter_pets
 from api.faceunlock import get_balance
+from config import DEFAULT_WATCHED_PETS
 from database import (
     get_panel, save_panel,
     get_alert, set_alert, toggle_alert,
     save_pet_snapshot, get_pets_farmed,
-    get_watched_pets,
     get_zp_key,
 )
 from keyboards import stats_kb, settings_kb, alerts_kb, cancel_kb
@@ -152,19 +152,18 @@ async def build_stats_text(user_id: int) -> str:
     api_key = get_panel(user_id)
     if not api_key:
         return "❌ API ключ не настроен.\n\nОтправь /start чтобы подключить."
-    zp_key          = get_zp_key(user_id)
-    watched_filters = get_watched_pets(user_id)
+    zp_key = get_zp_key(user_id)
     results = await asyncio.gather(
         get_dashboard(api_key),
         get_balance(zp_key) if zp_key else _skip(),
-        get_all_pets(api_key) if watched_filters else _skip(),
+        get_all_pets(api_key),
         return_exceptions=True,
     )
     ok_d,  dash,     err_d = results[0] if not isinstance(results[0], BaseException) else (False, {}, str(results[0]))
     ok_zp, zp_bal,   _     = results[1] if not isinstance(results[1], BaseException) else (False, {}, "")
     ok_p,  all_pets, _     = results[2] if not isinstance(results[2], BaseException) else (False, {}, "")
     lines = _build_lines(ok_d, dash, err_d, ok_zp, zp_bal)
-    _append_pets(lines, user_id, ok_p, all_pets, watched_filters)
+    _append_pets(lines, user_id, ok_p, all_pets, DEFAULT_WATCHED_PETS)
     return "\n".join(lines)
 
 
@@ -222,17 +221,15 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
             except asyncio.TimeoutError:
                 pass
 
-        watched_filters = get_watched_pets(user_id)
         await upd("⏳ <b>[4/4]</b> Загружаю петов...")
         ok_p, all_pets = False, {}
-        if watched_filters:
-            try:
-                ok_p, all_pets, _ = await asyncio.wait_for(get_all_pets(api_key), timeout=40.0)
-            except asyncio.TimeoutError:
-                pass
+        try:
+            ok_p, all_pets, _ = await asyncio.wait_for(get_all_pets(api_key), timeout=40.0)
+        except asyncio.TimeoutError:
+            pass
 
         lines = _build_lines(ok_d, dash, err_d, ok_zp, zp_bal)
-        _append_pets(lines, user_id, ok_p, all_pets, watched_filters)
+        _append_pets(lines, user_id, ok_p, all_pets, DEFAULT_WATCHED_PETS)
         text = "\n".join(lines)
 
         try:
