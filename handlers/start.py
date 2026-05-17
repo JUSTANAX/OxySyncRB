@@ -126,21 +126,23 @@ async def build_stats_text(user_id: int) -> str:
     if ok_p and all_pets and watched_filters:
         save_pet_snapshot(user_id, all_pets)
 
-        display = {
-            k: v for k, v in all_pets.items()
-            if any(f.lower() == v["name"].lower() for f in watched_filters)
-        }
+        watched_set = {f.lower() for f in watched_filters}
+        display = {k: v for k, v in all_pets.items() if k.lower() in watched_set}
 
         period_diffs = {
             label: get_pets_farmed(user_id, display, hours)
             for hours, label in PERIODS
         }
 
-        unicorns = filter_pets(display, "unicorn")
+        unicorns = {**filter_pets(display, "unicorn"), **filter_pets(display, "alicorn")}
         dragons  = filter_pets(display, "dragon", exclude="dragonfly")
+        shown    = set(unicorns) | set(dragons)
+        others   = {k: v for k, v in display.items() if k not in shown}
 
         pet_lines = []
-        for emoji, category in [("🦄", unicorns), ("🐉", dragons)]:
+        for emoji, category in [("🦄", unicorns), ("🐉", dragons), ("🐾", others)]:
+            if not category:
+                continue
             for kind, data in sorted(category.items(), key=lambda x: -x[1]["quantity"]):
                 egg = " 🥚" if data["is_egg"] else ""
                 pet_lines.append(f"  {emoji} {data['name']}{egg} × {data['quantity']}")
@@ -166,15 +168,17 @@ async def _gather_stats(api_key: str, zp_key: str | None, watched_filters: list[
         get_dashboard(api_key),
         get_balance(zp_key) if zp_key else _skip(),
         get_all_pets(api_key) if watched_filters else _skip(),
+        return_exceptions=True,
     )
-    ok_d,  dash,     err_d = results[0]
-    ok_zp, zp_bal,   _     = results[1]
-    ok_p,  all_pets, _     = results[2]
+    ok_d,  dash,     err_d = results[0] if not isinstance(results[0], BaseException) else (False, {}, str(results[0]))
+    ok_zp, zp_bal,   _     = results[1] if not isinstance(results[1], BaseException) else (False, {}, "")
+    ok_p,  all_pets, _     = results[2] if not isinstance(results[2], BaseException) else (False, {}, "")
     return ok_d, dash, err_d, ok_zp, zp_bal, ok_p, all_pets
 
 
 async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
     kb = stats_kb()
+    loading = None
     try:
         if edit and hasattr(msg_or_obj, "edit_text"):
             try:
@@ -196,8 +200,12 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
             except (TelegramBadRequest, TelegramNetworkError):
                 await msg_or_obj.answer(text, parse_mode="HTML", reply_markup=kb)
             save_stats_msg(user_id, loading.chat.id, loading.message_id)
-    except (TelegramBadRequest, TelegramNetworkError):
-        pass
+    except Exception:
+        if loading is not None:
+            try:
+                await loading.edit_text("❌ Ошибка загрузки. Попробуй /start")
+            except Exception:
+                pass
 
 
 # ─── Кнопки главного экрана ───────────────────────────────────────────────────
@@ -316,11 +324,11 @@ async def _send_pets_card(target, user_id: int):
         return
 
     watched_filters = get_watched_pets(user_id)
-    display = (
-        {k: v for k, v in all_pets.items()
-         if any(f.lower() == v["name"].lower() for f in watched_filters)}
-        if watched_filters else all_pets
-    )
+    if watched_filters:
+        watched_set = {f.lower() for f in watched_filters}
+        display = {k: v for k, v in all_pets.items() if k.lower() in watched_set}
+    else:
+        display = all_pets
 
     period_diffs = {
         label: get_pets_farmed(user_id, display, hours)
@@ -355,13 +363,13 @@ def _pets_mgmt_text(filters: list[str]) -> str:
         return (
             "🐾 <b>Трекинг петов</b>\n\n"
             "Список пуст — петы на главном экране не показываются.\n\n"
-            "Нажми <b>➕ Добавить</b> и введи точное название пета."
+            "Нажми <b>➕ Добавить</b> и введи ID пета (pet_kind)."
         )
     names = "\n".join(f"  • {f}" for f in filters)
     return (
         f"🐾 <b>Трекинг петов</b>\n\n"
-        f"Отслеживаемые петы:\n{names}\n\n"
-        "Нажми на пета чтобы удалить его из списка."
+        f"Отслеживаемые ID:\n{names}\n\n"
+        "Нажми на ID чтобы удалить его из списка."
     )
 
 
@@ -399,8 +407,8 @@ async def pet_add_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(States.waiting_pet_filter)
     await callback.message.edit_text(
         "🐾 <b>Добавить пета</b>\n\n"
-        "Введи точное название пета (буква в букву, регистр не важен).\n\n"
-        "Пример: <code>Dragon Wyvern</code>",
+        "Введи <b>ID пета</b> (pet_kind), регистр не важен.\n\n"
+        "Пример: <code>golden_dragon</code>",
         parse_mode="HTML",
         reply_markup=cancel_kb("pets_mgmt"),
     )

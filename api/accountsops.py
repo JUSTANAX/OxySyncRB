@@ -109,10 +109,16 @@ async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
     if not acc_ids:
         return True, {}, ""
 
-    results = await asyncio.gather(*[get_account_pets(api_key, aid) for aid in acc_ids])
+    results = await asyncio.gather(
+        *[get_account_pets(api_key, aid) for aid in acc_ids],
+        return_exceptions=True,
+    )
 
     pets: dict = {}
-    for ok2, acc_pets, _ in results:
+    for result in results:
+        if isinstance(result, BaseException):
+            continue
+        ok2, acc_pets, _ = result
         if not ok2:
             continue
         for pet in acc_pets:

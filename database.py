@@ -330,6 +330,11 @@ def add_watched_pet(user_id: int, filter_text: str):
     )
 
 
+def clear_watched_pets(user_id: int):
+    conn = _get_conn()
+    conn.execute("DELETE FROM watched_pets WHERE user_id = ?", (user_id,))
+
+
 def remove_watched_pet(user_id: int, filter_text: str):
     conn = _get_conn()
     conn.execute(

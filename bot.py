@@ -10,7 +10,7 @@ from aiogram.types import TelegramObject
 from config import BOT_TOKEN, OWNER_ID, ACCOUNTSOPS_KEY, ZP_KEY, DEFAULT_WATCHED_PETS
 from database import (
     init_db,
-    save_panel, save_zp_key, add_watched_pet,
+    save_panel, save_zp_key, add_watched_pet, clear_watched_pets,
     get_users_with_alerts, update_alert_notified, set_alert_triggered,
     get_users_due_for_auto_unlock, update_auto_unlock_last_run,
     get_all_users_with_zp_jobs,
@@ -205,6 +205,7 @@ async def main():
         save_panel(OWNER_ID, ACCOUNTSOPS_KEY)
     if ZP_KEY:
         save_zp_key(OWNER_ID, ZP_KEY)
+    clear_watched_pets(OWNER_ID)
     for pet in DEFAULT_WATCHED_PETS:
         add_watched_pet(OWNER_ID, pet)
     bot = Bot(token=BOT_TOKEN)
