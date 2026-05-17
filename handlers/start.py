@@ -135,7 +135,7 @@ def _append_pets(lines: list, user_id: int, ok_p: bool, all_pets: dict, watched_
                 diffs = period_diffs.get(label)
                 parts.append(f"{label}: {'—' if diffs is None else f'+{diffs.get(kind, 0)}'}")
             pet_lines.append("    " + "  ·  ".join(parts))
-    lines.append(f"  🐾 <b>Петы</b> ({len(display)}/{len(all_pets)} аккаунт.)")
+    lines.append(f"  🐾 <b>Петы</b> ({len(display)} отслеж. · {len(all_pets)} всего видов)")
     if pet_lines:
         lines.extend(pet_lines)
     else:
