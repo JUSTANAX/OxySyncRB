@@ -86,11 +86,21 @@ async def receive_key(message: Message, state: FSMContext):
 # ─── Построение статистики ────────────────────────────────────────────────────
 
 def _append_pets(lines: list, user_id: int, ok_p: bool, all_pets: dict, watched_filters: list[str]):
-    if not (ok_p and all_pets and watched_filters):
+    if not watched_filters:
+        return
+    lines.append("")
+    if not ok_p:
+        lines.append("  🐾 <b>Петы</b>: ❌ ошибка загрузки")
+        return
+    if not all_pets:
+        lines.append("  🐾 <b>Петы</b>: нет данных (trackstats пуст)")
         return
     save_pet_snapshot(user_id, all_pets)
     watched_set = {f.lower() for f in watched_filters}
     display = {k: v for k, v in all_pets.items() if k.lower() in watched_set}
+    if not display:
+        lines.append(f"  🐾 <b>Петы</b>: 0/{len(all_pets)} совпадений по ID")
+        return
     period_diffs = {label: get_pets_farmed(user_id, display, hours) for hours, label in PERIODS}
     unicorns = {**filter_pets(display, "unicorn"), **filter_pets(display, "alicorn")}
     dragons  = filter_pets(display, "dragon", exclude="dragonfly")
@@ -108,10 +118,11 @@ def _append_pets(lines: list, user_id: int, ok_p: bool, all_pets: dict, watched_
                 diffs = period_diffs.get(label)
                 parts.append(f"{label}: {'—' if diffs is None else f'+{diffs.get(kind, 0)}'}")
             pet_lines.append("    " + "  ·  ".join(parts))
+    lines.append(f"  🐾 <b>Петы</b> ({len(display)}/{len(all_pets)} аккаунт.)")
     if pet_lines:
-        lines.append("")
-        lines.append(f"  🐾 <b>Петы</b> (фильтр: {len(watched_filters)})")
         lines.extend(pet_lines)
+    else:
+        lines.append("    (нет питомцев в аккаунтах)")
 
 
 def _build_lines(ok_d, dash, err_d, ok_zp, zp_bal) -> list[str]:
