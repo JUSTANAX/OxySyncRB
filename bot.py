@@ -184,7 +184,7 @@ async def stats_refresh_loop(bot: Bot):
         await asyncio.sleep(300)  # every 5 minutes
         for user_id, chat_id, message_id in get_all_stats_msgs():
             try:
-                text = await build_stats_text(user_id)
+                text = await asyncio.wait_for(build_stats_text(user_id), timeout=40.0)
                 await bot.edit_message_text(
                     text,
                     chat_id=chat_id,

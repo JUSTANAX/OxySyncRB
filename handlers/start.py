@@ -67,7 +67,10 @@ async def receive_key(message: Message, state: FSMContext):
     from_settings = data.get("from_settings", False)
 
     msg = await message.answer("🔄 Проверяю ключ...")
-    ok, _, err = await get_dashboard(api_key)
+    try:
+        ok, _, err = await asyncio.wait_for(get_dashboard(api_key), timeout=20.0)
+    except asyncio.TimeoutError:
+        ok, err = False, "Сервер не ответил. Попробуй ещё раз."
     if not ok:
         await msg.edit_text(
             f"❌ <b>Ошибка:</b> {err}\n\nПопробуй ещё раз:",
@@ -185,7 +188,7 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
                 await msg_or_obj.edit_text("🔄 Загружаю...", parse_mode="HTML")
             except (TelegramBadRequest, TelegramNetworkError):
                 pass
-            text = await build_stats_text(user_id)
+            text = await asyncio.wait_for(build_stats_text(user_id), timeout=40.0)
             try:
                 await msg_or_obj.edit_text(text, parse_mode="HTML", reply_markup=kb)
             except TelegramBadRequest as e:
@@ -194,7 +197,7 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
             save_stats_msg(user_id, msg_or_obj.chat.id, msg_or_obj.message_id)
         else:
             loading = await msg_or_obj.answer("🔄 Загружаю...")
-            text = await build_stats_text(user_id)
+            text = await asyncio.wait_for(build_stats_text(user_id), timeout=40.0)
             try:
                 await loading.edit_text(text, parse_mode="HTML", reply_markup=kb)
             except (TelegramBadRequest, TelegramNetworkError):
