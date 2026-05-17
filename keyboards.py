@@ -117,8 +117,6 @@ def cancel_to_fu_kb() -> InlineKeyboardMarkup:
     ])
 
 
-# ─── Вспомогательные ─────────────────────────────────────────────────────────
-
 def cancel_kb(back_cb: str = "back") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отмена", callback_data=back_cb)]

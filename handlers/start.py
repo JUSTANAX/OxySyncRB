@@ -7,15 +7,25 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 
-from api.accountsops import get_dashboard
+from api.accountsops import get_dashboard, get_all_pets, filter_pets
 from api.faceunlock import get_balance
 from database import (
     get_panel, save_panel,
     get_alert, set_alert, toggle_alert,
+    save_pet_snapshot, get_pets_farmed,
+    get_watched_pets,
     get_zp_key,
 )
 from keyboards import stats_kb, settings_kb, alerts_kb, cancel_kb
 from state_cache import save_stats_msg, clear_stats_msg
+
+PERIODS = [
+    (1,   "1ч"),
+    (12,  "12ч"),
+    (24,  "24ч"),
+    (72,  "3д"),
+    (168, "7д"),
+]
 
 router = Router()
 
@@ -75,19 +85,36 @@ async def receive_key(message: Message, state: FSMContext):
 
 # ─── Построение статистики ────────────────────────────────────────────────────
 
-async def build_stats_text(user_id: int) -> str:
-    api_key = get_panel(user_id)
-    if not api_key:
-        return "❌ API ключ не настроен.\n\nОтправь /start чтобы подключить."
-    zp_key = get_zp_key(user_id)
-    results = await asyncio.gather(
-        get_dashboard(api_key),
-        get_balance(zp_key) if zp_key else _skip(),
-        return_exceptions=True,
-    )
-    ok_d, dash, err_d = results[0] if not isinstance(results[0], BaseException) else (False, {}, str(results[0]))
-    ok_zp, zp_bal, _  = results[1] if not isinstance(results[1], BaseException) else (False, {}, "")
+def _append_pets(lines: list, user_id: int, ok_p: bool, all_pets: dict, watched_filters: list[str]):
+    if not (ok_p and all_pets and watched_filters):
+        return
+    save_pet_snapshot(user_id, all_pets)
+    watched_set = {f.lower() for f in watched_filters}
+    display = {k: v for k, v in all_pets.items() if k.lower() in watched_set}
+    period_diffs = {label: get_pets_farmed(user_id, display, hours) for hours, label in PERIODS}
+    unicorns = {**filter_pets(display, "unicorn"), **filter_pets(display, "alicorn")}
+    dragons  = filter_pets(display, "dragon", exclude="dragonfly")
+    shown    = set(unicorns) | set(dragons)
+    others   = {k: v for k, v in display.items() if k not in shown}
+    pet_lines = []
+    for emoji, category in [("🦄", unicorns), ("🐉", dragons), ("🐾", others)]:
+        if not category:
+            continue
+        for kind, data in sorted(category.items(), key=lambda x: -x[1]["quantity"]):
+            egg = " 🥚" if data["is_egg"] else ""
+            pet_lines.append(f"  {emoji} {data['name']}{egg} × {data['quantity']}")
+            parts = []
+            for _, label in PERIODS:
+                diffs = period_diffs.get(label)
+                parts.append(f"{label}: {'—' if diffs is None else f'+{diffs.get(kind, 0)}'}")
+            pet_lines.append("    " + "  ·  ".join(parts))
+    if pet_lines:
+        lines.append("")
+        lines.append(f"  🐾 <b>Петы</b> (фильтр: {len(watched_filters)})")
+        lines.extend(pet_lines)
 
+
+def _build_lines(ok_d, dash, err_d, ok_zp, zp_bal) -> list[str]:
     status = "🟢 AccountsOps" if ok_d else "🔴 AccountsOps"
     lines  = [f"📊 <b>OxySync</b>\n{status}"]
     if ok_d:
@@ -107,6 +134,26 @@ async def build_stats_text(user_id: int) -> str:
         if res > 0:
             zp_line += f"  (резерв: ${res:.2f})"
         lines.append(zp_line)
+    return lines
+
+
+async def build_stats_text(user_id: int) -> str:
+    api_key = get_panel(user_id)
+    if not api_key:
+        return "❌ API ключ не настроен.\n\nОтправь /start чтобы подключить."
+    zp_key          = get_zp_key(user_id)
+    watched_filters = get_watched_pets(user_id)
+    results = await asyncio.gather(
+        get_dashboard(api_key),
+        get_balance(zp_key) if zp_key else _skip(),
+        get_all_pets(api_key) if watched_filters else _skip(),
+        return_exceptions=True,
+    )
+    ok_d,  dash,     err_d = results[0] if not isinstance(results[0], BaseException) else (False, {}, str(results[0]))
+    ok_zp, zp_bal,   _     = results[1] if not isinstance(results[1], BaseException) else (False, {}, "")
+    ok_p,  all_pets, _     = results[2] if not isinstance(results[2], BaseException) else (False, {}, "")
+    lines = _build_lines(ok_d, dash, err_d, ok_zp, zp_bal)
+    _append_pets(lines, user_id, ok_p, all_pets, watched_filters)
     return "\n".join(lines)
 
 
@@ -134,7 +181,7 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
         return
 
     # ── initial load ───────────────────────────────────────────────────────────
-    loading = await msg_or_obj.answer("⏳ <b>[1/3]</b> Читаю настройки...", parse_mode="HTML")
+    loading = await msg_or_obj.answer("⏳ <b>[1/4]</b> Читаю настройки...", parse_mode="HTML")
 
     async def upd(text: str):
         try:
@@ -149,14 +196,14 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
             return
         zp_key = get_zp_key(user_id)
 
-        await upd("⏳ <b>[2/3]</b> Запрос дашборда AccountsOps...")
+        await upd("⏳ <b>[2/4]</b> Запрос дашборда AccountsOps...")
         try:
             ok_d, dash, err_d = await asyncio.wait_for(get_dashboard(api_key), timeout=20.0)
         except asyncio.TimeoutError:
             ok_d, dash, err_d = False, {}, "таймаут (20 с)"
 
         zp_label = "баланс ZP..." if zp_key else "ZP ключ не задан, пропускаю..."
-        await upd(f"⏳ <b>[3/3]</b> {zp_label}")
+        await upd(f"⏳ <b>[3/4]</b> {zp_label}")
         ok_zp, zp_bal = False, {}
         if zp_key:
             try:
@@ -164,25 +211,17 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
             except asyncio.TimeoutError:
                 pass
 
-        status = "🟢 AccountsOps" if ok_d else "🔴 AccountsOps"
-        lines  = [f"📊 <b>OxySync</b>\n{status}"]
-        if ok_d:
-            active        = dash.get("active_count",   0)
-            total_passive = (dash.get("queue_count",    0)
-                           + dash.get("joining_count",  0)
-                           + dash.get("connected_count", 0))
-            unstable      = dash.get("unstable_count", 0)
-            lines.append("")
-            lines.append(f"  👥  ✅ {active}   💤 {total_passive}   ⚠️ {unstable}")
-        else:
-            lines.append(f"\n❌ {err_d}")
-        if ok_zp:
-            eff = zp_bal.get("effective", 0)
-            res = zp_bal.get("reserved",  0)
-            zp_line = f"  💰 ZP: <b>${eff:.2f}</b>"
-            if res > 0:
-                zp_line += f"  (резерв: ${res:.2f})"
-            lines.append(zp_line)
+        watched_filters = get_watched_pets(user_id)
+        await upd("⏳ <b>[4/4]</b> Загружаю петов...")
+        ok_p, all_pets = False, {}
+        if watched_filters:
+            try:
+                ok_p, all_pets, _ = await asyncio.wait_for(get_all_pets(api_key), timeout=40.0)
+            except asyncio.TimeoutError:
+                pass
+
+        lines = _build_lines(ok_d, dash, err_d, ok_zp, zp_bal)
+        _append_pets(lines, user_id, ok_p, all_pets, watched_filters)
         text = "\n".join(lines)
 
         try:
