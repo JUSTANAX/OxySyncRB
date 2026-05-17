@@ -1,40 +1,28 @@
 import asyncio
 
-from aiogram import Router, F
-from aiogram.filters import CommandStart, Command, StateFilter
-from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram import Router
+from aiogram.filters import CommandStart, StateFilter
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 
-from api.accountsops import get_dashboard, get_all_pets, filter_pets
+from api.accountsops import get_dashboard
 from api.faceunlock import get_balance
 from database import (
     get_panel, save_panel,
     get_alert, set_alert, toggle_alert,
-    save_pet_snapshot, get_pets_farmed,
-    get_watched_pets, add_watched_pet, remove_watched_pet,
     get_zp_key,
 )
-from keyboards import stats_kb, settings_kb, alerts_kb, cancel_kb, back_kb, pets_mgmt_kb
+from keyboards import stats_kb, settings_kb, alerts_kb, cancel_kb
 from state_cache import save_stats_msg, clear_stats_msg
-from charts import build_pets_image
-
-PERIODS = [
-    (1,   "1ч"),
-    (12,  "12ч"),
-    (24,  "24ч"),
-    (72,  "3д"),
-    (168, "7д"),
-]
 
 router = Router()
 
 
 class States(StatesGroup):
-    waiting_key        = State()
-    waiting_threshold  = State()
-    waiting_pet_filter = State()
+    waiting_key       = State()
+    waiting_threshold = State()
 
 
 async def _skip():
@@ -87,16 +75,21 @@ async def receive_key(message: Message, state: FSMContext):
 
 # ─── Построение статистики ────────────────────────────────────────────────────
 
-def _format_stats(
-    user_id: int,
-    ok_d: bool, dash: dict, err_d: str,
-    ok_zp: bool, zp_bal: dict,
-    ok_p: bool, all_pets: dict,
-    watched_filters: list[str],
-) -> str:
+async def build_stats_text(user_id: int) -> str:
+    api_key = get_panel(user_id)
+    if not api_key:
+        return "❌ API ключ не настроен.\n\nОтправь /start чтобы подключить."
+    zp_key = get_zp_key(user_id)
+    results = await asyncio.gather(
+        get_dashboard(api_key),
+        get_balance(zp_key) if zp_key else _skip(),
+        return_exceptions=True,
+    )
+    ok_d, dash, err_d = results[0] if not isinstance(results[0], BaseException) else (False, {}, str(results[0]))
+    ok_zp, zp_bal, _  = results[1] if not isinstance(results[1], BaseException) else (False, {}, "")
+
     status = "🟢 AccountsOps" if ok_d else "🔴 AccountsOps"
     lines  = [f"📊 <b>OxySync</b>\n{status}"]
-
     if ok_d:
         active        = dash.get("active_count",   0)
         total_passive = (dash.get("queue_count",    0)
@@ -107,84 +100,27 @@ def _format_stats(
         lines.append(f"  👥  ✅ {active}   💤 {total_passive}   ⚠️ {unstable}")
     else:
         lines.append(f"\n❌ {err_d}")
-
     if ok_zp:
-        eff     = zp_bal.get("effective", 0)
-        res     = zp_bal.get("reserved",  0)
+        eff = zp_bal.get("effective", 0)
+        res = zp_bal.get("reserved",  0)
         zp_line = f"  💰 ZP: <b>${eff:.2f}</b>"
         if res > 0:
             zp_line += f"  (резерв: ${res:.2f})"
         lines.append(zp_line)
-
-    if ok_p and all_pets and watched_filters:
-        save_pet_snapshot(user_id, all_pets)
-
-        watched_set = {f.lower() for f in watched_filters}
-        display = {k: v for k, v in all_pets.items() if k.lower() in watched_set}
-
-        period_diffs = {
-            label: get_pets_farmed(user_id, display, hours)
-            for hours, label in PERIODS
-        }
-
-        unicorns = {**filter_pets(display, "unicorn"), **filter_pets(display, "alicorn")}
-        dragons  = filter_pets(display, "dragon", exclude="dragonfly")
-        shown    = set(unicorns) | set(dragons)
-        others   = {k: v for k, v in display.items() if k not in shown}
-
-        pet_lines = []
-        for emoji, category in [("🦄", unicorns), ("🐉", dragons), ("🐾", others)]:
-            if not category:
-                continue
-            for kind, data in sorted(category.items(), key=lambda x: -x[1]["quantity"]):
-                egg = " 🥚" if data["is_egg"] else ""
-                pet_lines.append(f"  {emoji} {data['name']}{egg} × {data['quantity']}")
-                stat_parts = []
-                for _, label in PERIODS:
-                    diffs = period_diffs.get(label)
-                    if diffs is None:
-                        stat_parts.append(f"{label}: —")
-                    else:
-                        stat_parts.append(f"{label}: +{diffs.get(kind, 0)}")
-                pet_lines.append("    " + "  ·  ".join(stat_parts))
-
-        if pet_lines:
-            lines.append("")
-            lines.append(f"  🐾 <b>Петы</b> (фильтр: {len(watched_filters)})")
-            lines.extend(pet_lines)
-
     return "\n".join(lines)
-
-
-async def build_stats_text(user_id: int) -> str:
-    api_key = get_panel(user_id)
-    if not api_key:
-        return "❌ API ключ не настроен.\n\nОтправь /start чтобы подключить."
-    zp_key          = get_zp_key(user_id)
-    watched_filters = get_watched_pets(user_id)
-    results = await asyncio.gather(
-        get_dashboard(api_key),
-        get_balance(zp_key) if zp_key else _skip(),
-        get_all_pets(api_key) if watched_filters else _skip(),
-        return_exceptions=True,
-    )
-    ok_d,  dash,     err_d = results[0] if not isinstance(results[0], BaseException) else (False, {}, str(results[0]))
-    ok_zp, zp_bal,   _     = results[1] if not isinstance(results[1], BaseException) else (False, {}, "")
-    ok_p,  all_pets, _     = results[2] if not isinstance(results[2], BaseException) else (False, {}, "")
-    return _format_stats(user_id, ok_d, dash, err_d, ok_zp, zp_bal, ok_p, all_pets, watched_filters)
 
 
 async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
     kb = stats_kb()
 
-    # ── edit path (refresh / back) ────────────────────────────────────────────
+    # ── edit path (refresh / back) ─────────────────────────────────────────────
     if edit and hasattr(msg_or_obj, "edit_text"):
         try:
             await msg_or_obj.edit_text("🔄 Загружаю...", parse_mode="HTML")
         except (TelegramBadRequest, TelegramNetworkError):
             pass
         try:
-            text = await asyncio.wait_for(build_stats_text(user_id), timeout=40.0)
+            text = await asyncio.wait_for(build_stats_text(user_id), timeout=30.0)
         except Exception as e:
             text = f"❌ Ошибка загрузки: {type(e).__name__}. Нажми обновить."
         try:
@@ -192,13 +128,13 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
         except TelegramBadRequest as e:
             if "message is not modified" not in str(e):
                 pass
-        except (TelegramNetworkError, Exception):
+        except Exception:
             pass
         save_stats_msg(user_id, msg_or_obj.chat.id, msg_or_obj.message_id)
         return
 
-    # ── initial load: шаг за шагом, прогресс виден в Telegram ────────────────
-    loading = await msg_or_obj.answer("⏳ <b>[1/4]</b> Читаю настройки...", parse_mode="HTML")
+    # ── initial load ───────────────────────────────────────────────────────────
+    loading = await msg_or_obj.answer("⏳ <b>[1/3]</b> Читаю настройки...", parse_mode="HTML")
 
     async def upd(text: str):
         try:
@@ -211,19 +147,16 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
         if not api_key:
             await upd("❌ API ключ не найден в БД. Отправь /start заново.")
             return
-        zp_key          = get_zp_key(user_id)
-        watched_filters = get_watched_pets(user_id)
+        zp_key = get_zp_key(user_id)
 
-        # ── шаг 2: дашборд ───────────────────────────────────────────────────
-        await upd("⏳ <b>[2/4]</b> Запрос дашборда AccountsOps...")
+        await upd("⏳ <b>[2/3]</b> Запрос дашборда AccountsOps...")
         try:
             ok_d, dash, err_d = await asyncio.wait_for(get_dashboard(api_key), timeout=20.0)
         except asyncio.TimeoutError:
             ok_d, dash, err_d = False, {}, "таймаут (20 с)"
 
-        # ── шаг 3: баланс ZP ─────────────────────────────────────────────────
         zp_label = "баланс ZP..." if zp_key else "ZP ключ не задан, пропускаю..."
-        await upd(f"⏳ <b>[3/4]</b> {zp_label}")
+        await upd(f"⏳ <b>[3/3]</b> {zp_label}")
         ok_zp, zp_bal = False, {}
         if zp_key:
             try:
@@ -231,17 +164,27 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
             except asyncio.TimeoutError:
                 pass
 
-        # ── шаг 4: петы ──────────────────────────────────────────────────────
-        pets_label = f"данные по петам ({len(watched_filters)} фильтров)..." if watched_filters else "фильтры петов пусты, пропускаю..."
-        await upd(f"⏳ <b>[4/4]</b> {pets_label}")
-        ok_p, all_pets = False, {}
-        if watched_filters:
-            try:
-                ok_p, all_pets, _ = await asyncio.wait_for(get_all_pets(api_key), timeout=30.0)
-            except asyncio.TimeoutError:
-                pass
+        status = "🟢 AccountsOps" if ok_d else "🔴 AccountsOps"
+        lines  = [f"📊 <b>OxySync</b>\n{status}"]
+        if ok_d:
+            active        = dash.get("active_count",   0)
+            total_passive = (dash.get("queue_count",    0)
+                           + dash.get("joining_count",  0)
+                           + dash.get("connected_count", 0))
+            unstable      = dash.get("unstable_count", 0)
+            lines.append("")
+            lines.append(f"  👥  ✅ {active}   💤 {total_passive}   ⚠️ {unstable}")
+        else:
+            lines.append(f"\n❌ {err_d}")
+        if ok_zp:
+            eff = zp_bal.get("effective", 0)
+            res = zp_bal.get("reserved",  0)
+            zp_line = f"  💰 ZP: <b>${eff:.2f}</b>"
+            if res > 0:
+                zp_line += f"  (резерв: ${res:.2f})"
+            lines.append(zp_line)
+        text = "\n".join(lines)
 
-        text = _format_stats(user_id, ok_d, dash, err_d, ok_zp, zp_bal, ok_p, all_pets, watched_filters)
         try:
             await loading.edit_text(text, parse_mode="HTML", reply_markup=kb)
         except (TelegramBadRequest, TelegramNetworkError):
@@ -359,128 +302,3 @@ async def receive_threshold(message: Message, state: FSMContext):
         reply_markup=alerts_kb(row[0], bool(row[1])),
     )
 
-
-# ─── Карточка петов ───────────────────────────────────────────────────────────
-
-async def _send_pets_card(target, user_id: int):
-    api_key = get_panel(user_id)
-    if not api_key:
-        await target.answer("❌ API ключ не настроен.")
-        return
-
-    ok, all_pets, _ = await get_all_pets(api_key)
-    if not ok or not all_pets:
-        await target.answer("❌ Нет данных о петах.")
-        return
-
-    watched_filters = get_watched_pets(user_id)
-    if watched_filters:
-        watched_set = {f.lower() for f in watched_filters}
-        display = {k: v for k, v in all_pets.items() if k.lower() in watched_set}
-    else:
-        display = all_pets
-
-    period_diffs = {
-        label: get_pets_farmed(user_id, display, hours)
-        for hours, label in PERIODS
-    }
-
-    png = build_pets_image(display, period_diffs)
-    await target.answer_document(
-        BufferedInputFile(png, filename="pets.png"),
-        caption="🐾 <b>Pet Stats</b>",
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(lambda c: c.data == "pets_card")
-async def on_pets_card(callback: CallbackQuery):
-    await callback.answer("📊 Генерирую...")
-    await _send_pets_card(callback.message, callback.from_user.id)
-
-
-@router.message(Command("card"))
-async def cmd_card(message: Message):
-    msg = await message.answer("📊 Генерирую...")
-    await _send_pets_card(message, message.from_user.id)
-    await msg.delete()
-
-
-# ─── Трекинг петов — управление ──────────────────────────────────────────────
-
-def _pets_mgmt_text(filters: list[str]) -> str:
-    if not filters:
-        return (
-            "🐾 <b>Трекинг петов</b>\n\n"
-            "Список пуст — петы на главном экране не показываются.\n\n"
-            "Нажми <b>➕ Добавить</b> и введи ID пета (pet_kind)."
-        )
-    names = "\n".join(f"  • {f}" for f in filters)
-    return (
-        f"🐾 <b>Трекинг петов</b>\n\n"
-        f"Отслеживаемые ID:\n{names}\n\n"
-        "Нажми на ID чтобы удалить его из списка."
-    )
-
-
-@router.callback_query(lambda c: c.data == "pets_mgmt")
-async def open_pets_mgmt(callback: CallbackQuery, state: FSMContext):
-    clear_stats_msg(callback.from_user.id)
-    await state.clear()
-    filters = get_watched_pets(callback.from_user.id)
-    await callback.message.edit_text(
-        _pets_mgmt_text(filters),
-        parse_mode="HTML",
-        reply_markup=pets_mgmt_kb(filters),
-    )
-    await callback.answer()
-
-
-@router.callback_query(lambda c: c.data.startswith("pet_rm:"))
-async def pet_rm(callback: CallbackQuery):
-    user_id     = callback.from_user.id
-    filter_text = callback.data[len("pet_rm:"):]
-    remove_watched_pet(user_id, filter_text)
-    await callback.answer(f'❌ Фильтр "{filter_text}" удалён')
-    filters = get_watched_pets(user_id)
-    await callback.message.edit_text(
-        _pets_mgmt_text(filters),
-        parse_mode="HTML",
-        reply_markup=pets_mgmt_kb(filters),
-    )
-
-
-# ─── Трекинг петов — добавление через текст ──────────────────────────────────
-
-@router.callback_query(lambda c: c.data == "pet_add")
-async def pet_add_start(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(States.waiting_pet_filter)
-    await callback.message.edit_text(
-        "🐾 <b>Добавить пета</b>\n\n"
-        "Введи <b>ID пета</b> (pet_kind), регистр не важен.\n\n"
-        "Пример: <code>golden_dragon</code>",
-        parse_mode="HTML",
-        reply_markup=cancel_kb("pets_mgmt"),
-    )
-    await callback.answer()
-
-
-@router.message(States.waiting_pet_filter, F.text)
-async def receive_pet_filter(message: Message, state: FSMContext):
-    text = message.text.strip()
-    await message.delete()
-    if not text or len(text) < 2:
-        await message.answer(
-            "❌ Слишком короткое название. Введи хотя бы 2 символа:",
-            reply_markup=cancel_kb("pets_mgmt"),
-        )
-        return
-
-    add_watched_pet(message.from_user.id, text)
-    await state.clear()
-    filters = get_watched_pets(message.from_user.id)
-    await message.answer(
-        f'✅ Фильтр <b>"{text}"</b> добавлен.\n\n' + _pets_mgmt_text(filters),
-        parse_mode="HTML",
-        reply_markup=pets_mgmt_kb(filters),
-    )

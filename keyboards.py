@@ -5,7 +5,6 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 def stats_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")],
-        [InlineKeyboardButton(text="🐾 Трекинг петов", callback_data="pets_mgmt")],
         [
             InlineKeyboardButton(text="🔔 Уведомления", callback_data="alerts"),
             InlineKeyboardButton(text="🔧 Настройки",   callback_data="settings"),
@@ -130,18 +129,3 @@ def back_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back")]
     ])
 
-
-# ─── Трекинг петов ────────────────────────────────────────────────────────────
-
-def pets_mgmt_kb(filters: list[str]) -> InlineKeyboardMarkup:
-    """filters = list of filter strings the user has set."""
-    rows = []
-    for f in filters:
-        label = f if len(f) <= 28 else f[:27] + "…"
-        rows.append([InlineKeyboardButton(
-            text=f"❌  {label}",
-            callback_data=f"pet_rm:{f}",
-        )])
-    rows.append([InlineKeyboardButton(text="➕ Добавить", callback_data="pet_add")])
-    rows.append([InlineKeyboardButton(text="🔙 Назад",    callback_data="back")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
