@@ -241,7 +241,7 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
         await upd("⏳ <b>[4/4]</b> Загружаю петов...")
         ok_p, all_pets = False, {}
         try:
-            ok_p, all_pets, _ = await asyncio.wait_for(get_all_pets(api_key), timeout=40.0)
+            ok_p, all_pets, _ = await asyncio.wait_for(get_all_pets(api_key), timeout=20.0)
         except asyncio.TimeoutError:
             pass
 

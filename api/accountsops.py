@@ -98,7 +98,7 @@ async def get_account_pets(api_key: str, account_id) -> tuple[bool, list, str]:
 
 
 async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
-    """Aggregate pets across all accounts (concurrent per-account requests)."""
+    """Aggregate pets across all accounts using a shared session + semaphore."""
     ok, accounts, err = await get_trackstats_accounts(api_key)
     if not ok:
         return False, {}, err
@@ -109,19 +109,38 @@ async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
     if not acc_ids:
         return True, {}, ""
 
-    results = await asyncio.gather(
-        *[get_account_pets(api_key, aid) for aid in acc_ids],
-        return_exceptions=True,
-    )
+    headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
+    sem = asyncio.Semaphore(5)
+
+    async def _do_get(session: aiohttp.ClientSession, url: str) -> list:
+        async with session.get(url, headers=headers,
+                               timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            if resp.status != 200:
+                return []
+            return await resp.json()
+
+    async def fetch_one(session: aiohttp.ClientSession, aid) -> list:
+        async with sem:
+            url = f"{ACCOUNTSOPS_URL}/api/trackstats/accounts/{aid}/pets"
+            try:
+                return await asyncio.wait_for(_do_get(session, url), timeout=10.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return []
+
+    connector = aiohttp.TCPConnector(limit=10, force_close=True)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        raw = await asyncio.gather(
+            *[fetch_one(session, aid) for aid in acc_ids],
+            return_exceptions=True,
+        )
 
     pets: dict = {}
-    for result in results:
-        if isinstance(result, BaseException):
+    for entry in raw:
+        if isinstance(entry, BaseException) or not isinstance(entry, list):
             continue
-        ok2, acc_pets, _ = result
-        if not ok2:
-            continue
-        for pet in acc_pets:
+        for pet in entry:
             kind = pet.get("pet_kind")
             if not kind:
                 continue
