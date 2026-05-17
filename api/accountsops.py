@@ -99,9 +99,7 @@ async def get_account_pets(api_key: str, account_id) -> tuple[bool, list, str]:
 
 async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
     """Aggregate pets across all accounts (concurrent per-account requests)."""
-    logging.warning("[DBG] get_all_pets: вызов get_trackstats_accounts")
     ok, accounts, err = await get_trackstats_accounts(api_key)
-    logging.warning(f"[DBG] get_all_pets: get_trackstats_accounts done ok={ok} accounts={len(accounts) if ok else 0}")
     if not ok:
         return False, {}, err
     if not accounts:
@@ -111,12 +109,10 @@ async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
     if not acc_ids:
         return True, {}, ""
 
-    logging.warning(f"[DBG] get_all_pets: per-account gather start ({len(acc_ids)} acc)")
     results = await asyncio.gather(
         *[get_account_pets(api_key, aid) for aid in acc_ids],
         return_exceptions=True,
     )
-    logging.warning(f"[DBG] get_all_pets: per-account gather done")
 
     pets: dict = {}
     for result in results:

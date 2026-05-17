@@ -1,5 +1,4 @@
 import asyncio
-import logging
 
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command, StateFilter
@@ -68,12 +67,10 @@ async def receive_key(message: Message, state: FSMContext):
     from_settings = data.get("from_settings", False)
 
     msg = await message.answer("🔄 Проверяю ключ...")
-    logging.warning("[DBG] receive_key: вызов get_dashboard")
     try:
         ok, _, err = await asyncio.wait_for(get_dashboard(api_key), timeout=20.0)
     except asyncio.TimeoutError:
         ok, err = False, "Сервер не ответил. Попробуй ещё раз."
-    logging.warning(f"[DBG] receive_key: get_dashboard вернул ok={ok} err={err!r}")
     if not ok:
         await msg.edit_text(
             f"❌ <b>Ошибка:</b> {err}\n\nПопробуй ещё раз:",
@@ -85,34 +82,18 @@ async def receive_key(message: Message, state: FSMContext):
     save_panel(message.from_user.id, api_key)
     await state.clear()
     await msg.delete()
-    logging.warning("[DBG] receive_key: вызов show_stats")
     await show_stats(message, message.from_user.id)
-    logging.warning("[DBG] receive_key: show_stats завершён")
 
 
 # ─── Построение статистики ────────────────────────────────────────────────────
 
-async def build_stats_text(user_id: int) -> str:
-    logging.warning("[DBG] build_stats_text: старт")
-    api_key = get_panel(user_id)
-    if not api_key:
-        return "❌ API ключ не настроен.\n\nОтправь /start чтобы подключить."
-
-    zp_key          = get_zp_key(user_id)
-    watched_filters = get_watched_pets(user_id)
-    logging.warning(f"[DBG] build_stats_text: zp_key={bool(zp_key)} filters={len(watched_filters)}")
-
-    # Fetch concurrently; skip get_all_pets entirely when no filters are set
-    ok_d, dash, err_d = (False, {}, "")
-    ok_zp, zp_bal, _  = (False, {}, "")
-    ok_p, all_pets, _ = (False, {}, "")
-
-    logging.warning("[DBG] build_stats_text: вызов _gather_stats")
-    ok_d, dash, err_d, ok_zp, zp_bal, ok_p, all_pets = (
-        await _gather_stats(api_key, zp_key, watched_filters)
-    )
-    logging.warning(f"[DBG] build_stats_text: _gather_stats done ok_d={ok_d} ok_zp={ok_zp} ok_p={ok_p}")
-
+def _format_stats(
+    user_id: int,
+    ok_d: bool, dash: dict, err_d: str,
+    ok_zp: bool, zp_bal: dict,
+    ok_p: bool, all_pets: dict,
+    watched_filters: list[str],
+) -> str:
     status = "🟢 AccountsOps" if ok_d else "🔴 AccountsOps"
     lines  = [f"📊 <b>OxySync</b>\n{status}"]
 
@@ -175,57 +156,106 @@ async def build_stats_text(user_id: int) -> str:
     return "\n".join(lines)
 
 
-async def _gather_stats(api_key: str, zp_key: str | None, watched_filters: list[str]):
-    logging.warning(f"[DBG] _gather_stats: asyncio.gather start (zp={bool(zp_key)}, pets={bool(watched_filters)})")
+async def build_stats_text(user_id: int) -> str:
+    api_key = get_panel(user_id)
+    if not api_key:
+        return "❌ API ключ не настроен.\n\nОтправь /start чтобы подключить."
+    zp_key          = get_zp_key(user_id)
+    watched_filters = get_watched_pets(user_id)
     results = await asyncio.gather(
         get_dashboard(api_key),
         get_balance(zp_key) if zp_key else _skip(),
         get_all_pets(api_key) if watched_filters else _skip(),
         return_exceptions=True,
     )
-    logging.warning(f"[DBG] _gather_stats: asyncio.gather done results={[type(r).__name__ for r in results]}")
     ok_d,  dash,     err_d = results[0] if not isinstance(results[0], BaseException) else (False, {}, str(results[0]))
     ok_zp, zp_bal,   _     = results[1] if not isinstance(results[1], BaseException) else (False, {}, "")
     ok_p,  all_pets, _     = results[2] if not isinstance(results[2], BaseException) else (False, {}, "")
-    return ok_d, dash, err_d, ok_zp, zp_bal, ok_p, all_pets
+    return _format_stats(user_id, ok_d, dash, err_d, ok_zp, zp_bal, ok_p, all_pets, watched_filters)
 
 
 async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
-    logging.warning(f"[DBG] show_stats: start edit={edit}")
     kb = stats_kb()
-    loading = None
+
+    # ── edit path (refresh / back) ────────────────────────────────────────────
+    if edit and hasattr(msg_or_obj, "edit_text"):
+        try:
+            await msg_or_obj.edit_text("🔄 Загружаю...", parse_mode="HTML")
+        except (TelegramBadRequest, TelegramNetworkError):
+            pass
+        try:
+            text = await asyncio.wait_for(build_stats_text(user_id), timeout=40.0)
+        except Exception as e:
+            text = f"❌ Ошибка загрузки: {type(e).__name__}. Нажми обновить."
+        try:
+            await msg_or_obj.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e):
+                pass
+        except (TelegramNetworkError, Exception):
+            pass
+        save_stats_msg(user_id, msg_or_obj.chat.id, msg_or_obj.message_id)
+        return
+
+    # ── initial load: шаг за шагом, прогресс виден в Telegram ────────────────
+    loading = await msg_or_obj.answer("⏳ <b>[1/4]</b> Читаю настройки...", parse_mode="HTML")
+
+    async def upd(text: str):
+        try:
+            await loading.edit_text(text, parse_mode="HTML")
+        except Exception:
+            pass
+
     try:
-        if edit and hasattr(msg_or_obj, "edit_text"):
+        api_key = get_panel(user_id)
+        if not api_key:
+            await upd("❌ API ключ не найден в БД. Отправь /start заново.")
+            return
+        zp_key          = get_zp_key(user_id)
+        watched_filters = get_watched_pets(user_id)
+
+        # ── шаг 2: дашборд ───────────────────────────────────────────────────
+        await upd("⏳ <b>[2/4]</b> Запрос дашборда AccountsOps...")
+        try:
+            ok_d, dash, err_d = await asyncio.wait_for(get_dashboard(api_key), timeout=20.0)
+        except asyncio.TimeoutError:
+            ok_d, dash, err_d = False, {}, "таймаут (20 с)"
+
+        # ── шаг 3: баланс ZP ─────────────────────────────────────────────────
+        zp_label = "баланс ZP..." if zp_key else "ZP ключ не задан, пропускаю..."
+        await upd(f"⏳ <b>[3/4]</b> {zp_label}")
+        ok_zp, zp_bal = False, {}
+        if zp_key:
             try:
-                await msg_or_obj.edit_text("🔄 Загружаю...", parse_mode="HTML")
-            except (TelegramBadRequest, TelegramNetworkError):
+                ok_zp, zp_bal, _ = await asyncio.wait_for(get_balance(zp_key), timeout=20.0)
+            except asyncio.TimeoutError:
                 pass
-            logging.warning("[DBG] show_stats: вызов build_stats_text (edit)")
-            text = await asyncio.wait_for(build_stats_text(user_id), timeout=40.0)
-            logging.warning("[DBG] show_stats: build_stats_text done (edit)")
+
+        # ── шаг 4: петы ──────────────────────────────────────────────────────
+        pets_label = f"данные по петам ({len(watched_filters)} фильтров)..." if watched_filters else "фильтры петов пусты, пропускаю..."
+        await upd(f"⏳ <b>[4/4]</b> {pets_label}")
+        ok_p, all_pets = False, {}
+        if watched_filters:
             try:
-                await msg_or_obj.edit_text(text, parse_mode="HTML", reply_markup=kb)
-            except TelegramBadRequest as e:
-                if "message is not modified" not in str(e):
-                    raise
-            save_stats_msg(user_id, msg_or_obj.chat.id, msg_or_obj.message_id)
-        else:
-            loading = await msg_or_obj.answer("🔄 Загружаю...")
-            logging.warning("[DBG] show_stats: вызов build_stats_text")
-            text = await asyncio.wait_for(build_stats_text(user_id), timeout=40.0)
-            logging.warning("[DBG] show_stats: build_stats_text done")
-            try:
-                await loading.edit_text(text, parse_mode="HTML", reply_markup=kb)
-            except (TelegramBadRequest, TelegramNetworkError):
-                await msg_or_obj.answer(text, parse_mode="HTML", reply_markup=kb)
-            save_stats_msg(user_id, loading.chat.id, loading.message_id)
+                ok_p, all_pets, _ = await asyncio.wait_for(get_all_pets(api_key), timeout=30.0)
+            except asyncio.TimeoutError:
+                pass
+
+        text = _format_stats(user_id, ok_d, dash, err_d, ok_zp, zp_bal, ok_p, all_pets, watched_filters)
+        try:
+            await loading.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except (TelegramBadRequest, TelegramNetworkError):
+            await msg_or_obj.answer(text, parse_mode="HTML", reply_markup=kb)
+        save_stats_msg(user_id, loading.chat.id, loading.message_id)
+
     except Exception as e:
-        logging.warning(f"[DBG] show_stats: exception {type(e).__name__}: {e}")
-        if loading is not None:
-            try:
-                await loading.edit_text(f"❌ Ошибка: {type(e).__name__}. Попробуй /start")
-            except Exception:
-                pass
+        try:
+            await loading.edit_text(
+                f"❌ Неожиданная ошибка: <code>{type(e).__name__}: {e}</code>\n\nПопробуй /start",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
 
 
 # ─── Кнопки главного экрана ───────────────────────────────────────────────────
