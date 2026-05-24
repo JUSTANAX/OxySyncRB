@@ -16,6 +16,7 @@ def pet_kind_to_name(pet_kind: str) -> str:
 async def _patch(api_key: str, endpoint: str, body: dict) -> tuple[bool, any, str]:
     headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
     url = f"{ACCOUNTSOPS_URL}{endpoint}"
+    logging.warning("[PATCH] → %s | body=%s", url, body)
     last_err = "Не удалось подключиться к AccountsOps."
     for attempt in range(3):
         try:
@@ -25,6 +26,7 @@ async def _patch(api_key: str, endpoint: str, body: dict) -> tuple[bool, any, st
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     raw = await resp.text()
+                    logging.warning("[PATCH] ← %s | status=%s | body=%s", url, resp.status, raw[:500])
                     if resp.status == 401:
                         return False, None, "Неверный API ключ."
                     if resp.status == 403:
