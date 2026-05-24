@@ -110,11 +110,11 @@ async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
         return True, {}, ""
 
     headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(20)
 
     async def _do_get(session: aiohttp.ClientSession, url: str) -> list:
         async with session.get(url, headers=headers,
-                               timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                               timeout=aiohttp.ClientTimeout(total=4)) as resp:
             if resp.status != 200:
                 return []
             return await resp.json()
@@ -123,18 +123,22 @@ async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
         async with sem:
             url = f"{ACCOUNTSOPS_URL}/api/trackstats/accounts/{aid}/pets"
             try:
-                return await asyncio.wait_for(_do_get(session, url), timeout=10.0)
+                return await asyncio.wait_for(_do_get(session, url), timeout=5.0)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 return []
 
-    connector = aiohttp.TCPConnector(limit=10, force_close=True)
+    connector = aiohttp.TCPConnector(limit=25, force_close=True)
     async with aiohttp.ClientSession(connector=connector) as session:
-        raw = await asyncio.gather(
-            *[fetch_one(session, aid) for aid in acc_ids],
-            return_exceptions=True,
-        )
+        try:
+            raw = await asyncio.wait_for(
+                asyncio.gather(*[fetch_one(session, aid) for aid in acc_ids],
+                               return_exceptions=True),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            raw = []
 
     pets: dict = {}
     for entry in raw:
@@ -173,11 +177,11 @@ async def get_accounts_with_pet(api_key: str, pet_kind: str) -> tuple[bool, list
         return True, [], ""
 
     headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(20)
 
     async def _do_get(session: aiohttp.ClientSession, url: str) -> list:
         async with session.get(url, headers=headers,
-                               timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                               timeout=aiohttp.ClientTimeout(total=4)) as resp:
             if resp.status != 200:
                 return []
             return await resp.json()
@@ -186,18 +190,22 @@ async def get_accounts_with_pet(api_key: str, pet_kind: str) -> tuple[bool, list
         async with sem:
             url = f"{ACCOUNTSOPS_URL}/api/trackstats/accounts/{aid}/pets"
             try:
-                return await asyncio.wait_for(_do_get(session, url), timeout=10.0)
+                return await asyncio.wait_for(_do_get(session, url), timeout=5.0)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 return []
 
-    connector = aiohttp.TCPConnector(limit=10, force_close=True)
+    connector = aiohttp.TCPConnector(limit=25, force_close=True)
     async with aiohttp.ClientSession(connector=connector) as session:
-        raw = await asyncio.gather(
-            *[fetch_one(session, aid) for aid, _ in accs],
-            return_exceptions=True,
-        )
+        try:
+            raw = await asyncio.wait_for(
+                asyncio.gather(*[fetch_one(session, aid) for aid, _ in accs],
+                               return_exceptions=True),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            raw = []
 
     usernames: list[str] = []
     for (acc_id, username), pets in zip(accs, raw):
