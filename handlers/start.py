@@ -194,7 +194,7 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
         except (TelegramBadRequest, TelegramNetworkError):
             pass
         try:
-            text = await asyncio.wait_for(build_stats_text(user_id), timeout=30.0)
+            text = await asyncio.wait_for(build_stats_text(user_id), timeout=90.0)
         except Exception as e:
             text = f"❌ Ошибка загрузки: {type(e).__name__}. Нажми обновить."
         try:
@@ -241,7 +241,7 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
         await upd("⏳ <b>[4/4]</b> Загружаю петов...")
         ok_p, all_pets = False, {}
         try:
-            ok_p, all_pets, _ = await asyncio.wait_for(get_all_pets(api_key), timeout=20.0)
+            ok_p, all_pets, _ = await asyncio.wait_for(get_all_pets(api_key), timeout=90.0)
         except asyncio.TimeoutError:
             pass
 

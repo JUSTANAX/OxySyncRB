@@ -105,8 +105,7 @@ async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
     if not accounts:
         return True, {}, ""
 
-    acc_ids = [acc["id"] for acc in accounts
-               if acc.get("id") and acc.get("total_pets", 1) > 0]
+    acc_ids = [acc["id"] for acc in accounts if acc.get("id")]
     if not acc_ids:
         return True, {}, ""
 
@@ -132,14 +131,10 @@ async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
 
     connector = aiohttp.TCPConnector(limit=25, force_close=True)
     async with aiohttp.ClientSession(connector=connector) as session:
-        try:
-            raw = await asyncio.wait_for(
-                asyncio.gather(*[fetch_one(session, aid) for aid in acc_ids],
-                               return_exceptions=True),
-                timeout=15.0,
-            )
-        except asyncio.TimeoutError:
-            raw = []
+        raw = await asyncio.gather(
+            *[fetch_one(session, aid) for aid in acc_ids],
+            return_exceptions=True,
+        )
 
     pets: dict = {}
     for entry in raw:
@@ -173,8 +168,7 @@ async def get_accounts_with_pet(api_key: str, pet_kind: str) -> tuple[bool, list
         return True, [], ""
 
     accs = [(acc.get("id"), acc.get("username") or acc.get("name", ""))
-            for acc in accounts
-            if acc.get("id") and acc.get("total_pets", 1) > 0]
+            for acc in accounts if acc.get("id")]
     if not accs:
         return True, [], ""
 
@@ -200,14 +194,10 @@ async def get_accounts_with_pet(api_key: str, pet_kind: str) -> tuple[bool, list
 
     connector = aiohttp.TCPConnector(limit=25, force_close=True)
     async with aiohttp.ClientSession(connector=connector) as session:
-        try:
-            raw = await asyncio.wait_for(
-                asyncio.gather(*[fetch_one(session, aid) for aid, _ in accs],
-                               return_exceptions=True),
-                timeout=15.0,
-            )
-        except asyncio.TimeoutError:
-            raw = []
+        raw = await asyncio.gather(
+            *[fetch_one(session, aid) for aid, _ in accs],
+            return_exceptions=True,
+        )
 
     usernames: list[str] = []
     for (acc_id, username), pets in zip(accs, raw):
