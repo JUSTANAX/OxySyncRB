@@ -385,31 +385,6 @@ def set_auto_enable_pet(user_id: int, enabled: bool):
     )
 
 
-def get_users_with_auto_enable_pet() -> list[tuple[int, str]]:
-    """Returns [(user_id, ao_key)] for users with auto-enable-pet enabled."""
-    conn = _get_conn()
-    return conn.execute(
-        "SELECT a.user_id, p.api_key "
-        "FROM auto_enable_pet a JOIN panels p ON a.user_id = p.user_id "
-        "WHERE a.enabled = 1"
-    ).fetchall()
-
-
-def get_auto_enable_pet_notified(user_id: int) -> str | None:
-    conn = _get_conn()
-    row = conn.execute(
-        "SELECT last_notified FROM auto_enable_pet WHERE user_id = ?", (user_id,)
-    ).fetchone()
-    return row[0] if row else None
-
-
-def set_auto_enable_pet_notified(user_id: int):
-    conn = _get_conn()
-    conn.execute(
-        "UPDATE auto_enable_pet SET last_notified = ? WHERE user_id = ?",
-        (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), user_id),
-    )
-
 
 # ─── Autopilot ────────────────────────────────────────────────────────────────
 
