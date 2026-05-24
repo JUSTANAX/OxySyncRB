@@ -19,8 +19,8 @@ from database import (
     get_zp_job, save_zp_job, clear_zp_job,
     get_users_with_autopilot_running,
     get_autopilot_config, set_autopilot_running, set_autopilot_last_checked,
-    get_autopilot_active_entries, get_autopilot_pending_entries,
-    get_autopilot_active_count, get_autopilot_done_count,
+    get_autopilot_farming_entries, get_autopilot_trading_entries,
+    increment_autopilot_trades_done,
     get_autopilot_stuck_entries,
     set_autopilot_entry_status,
     get_autopilot_pets,
@@ -33,7 +33,7 @@ from keyboards import stats_kb
 from state_cache import get_all_stats_msgs, clear_stats_msg
 from api.accountsops import (
     get_dashboard, get_face_accounts,
-    get_account_pets, set_accounts_enabled,
+    get_account_pets, set_accounts_enabled, set_accounts_config,
 )
 from api.faceunlock import submit_job, get_status
 
@@ -210,41 +210,42 @@ async def stats_refresh_loop(bot: Bot):
 
 
 async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
-    cfg = get_autopilot_config(user_id)
+    cfg      = get_autopilot_config(user_id)
     pet_rows = get_autopilot_pets(user_id)
     if not cfg or not cfg["main_account"] or not pet_rows:
         set_autopilot_running(user_id, False)
         return
 
-    pet_ids_set  = {pid for _, pid in pet_rows}
-    main_account = cfg["main_account"]
-    batch_size   = cfg.get("batch_size") or 10
-    active       = get_autopilot_active_entries(user_id)
+    pet_ids_set     = {pid for _, pid in pet_rows}
+    trade_config_id = cfg.get("config_id")
+    farm_config_id  = cfg.get("farm_config_id")
 
-    done_ids:       list[int] = []
-    done_usernames: list[str] = []
-    for entry_id, acc_id, username in active:
+    # Check trading accounts — did they trade the pet?
+    for entry_id, acc_id, username in get_autopilot_trading_entries(user_id):
         ok, pets, _ = await get_account_pets(ao_key, acc_id)
-        if ok:
-            has_pet = any(p.get("pet_kind") in pet_ids_set for p in pets)
-            if not has_pet:
-                done_ids.append(entry_id)
-                done_usernames.append(username)
+        if not ok:
+            continue
+        if not any(p.get("pet_kind") in pet_ids_set for p in pets):
+            if farm_config_id:
+                await set_accounts_config(ao_key, [username], farm_config_id)
+            await set_accounts_enabled(ao_key, [username], False)
+            await set_accounts_enabled(ao_key, [username], True)
+            set_autopilot_entry_status(entry_id, "farming")
+            increment_autopilot_trades_done(user_id)
 
-    if done_usernames:
-        await set_accounts_enabled(ao_key, done_usernames, False)
-        for eid in done_ids:
-            set_autopilot_entry_status(eid, "done")
-
+    # Check stuck trading accounts — return to farming
     stuck_timeout = cfg.get("stuck_timeout") or 10
     stuck = get_autopilot_stuck_entries(user_id, stuck_timeout * 60)
     if stuck:
         stuck_usernames = [username for _, _, username in stuck]
-        await set_accounts_enabled(ao_key, stuck_usernames, False)
-        for entry_id, _, _ in stuck:
-            set_autopilot_entry_status(entry_id, "stuck")
+        for entry_id, _, username in stuck:
+            if farm_config_id:
+                await set_accounts_config(ao_key, [username], farm_config_id)
+            await set_accounts_enabled(ao_key, [username], False)
+            await set_accounts_enabled(ao_key, [username], True)
+            set_autopilot_entry_status(entry_id, "farming")
         try:
-            lines = [f"⏰ <b>Авто-пилот</b> — зависшие аккаунты заменены\n"]
+            lines = [f"⏰ <b>Авто-пилот</b> — зависшие аккаунты возвращены в фарм\n"]
             lines.append(f"Без передачи пета >{stuck_timeout} мин: <b>{len(stuck_usernames)}</b>")
             for u in stuck_usernames[:10]:
                 lines.append(f"• <code>{u}</code>")
@@ -254,48 +255,17 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         except Exception as e:
             logging.error("Stuck notify user=%s: %s", user_id, e)
 
-    slots = max(0, batch_size - get_autopilot_active_count(user_id))
-    if slots > 0:
-        pending = get_autopilot_pending_entries(user_id)[:slots]
-        if pending:
-            new_users = [u for _, _, u in pending]
-            ok2, _, _ = await set_accounts_enabled(ao_key, new_users, True)
-            if ok2:
-                for eid, _, _ in pending:
-                    set_autopilot_entry_status(eid, "active")
-
-    if get_autopilot_active_count(user_id) == 0 and not get_autopilot_pending_entries(user_id):
-        await set_accounts_enabled(ao_key, [main_account], False)
-        set_autopilot_running(user_id, False)
-        done_count  = get_autopilot_done_count(user_id)
-        started_at  = cfg.get("started_at")
-        elapsed_str = ""
-        if started_at:
-            try:
-                delta   = datetime.utcnow() - datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S")
-                seconds = int(delta.total_seconds())
-                if seconds < 60:
-                    elapsed_str = f"{seconds}с"
-                elif seconds < 3600:
-                    m, s = divmod(seconds, 60)
-                    elapsed_str = f"{m} мин {s}с" if s else f"{m} мин"
-                else:
-                    h, rem = divmod(seconds, 3600)
-                    m = rem // 60
-                    elapsed_str = f"{h} ч {m} мин" if m else f"{h} ч"
-            except Exception:
-                pass
-        try:
-            await bot.send_message(
-                user_id,
-                f"🤖 <b>Авто-пилот</b> — завершён ✅\n\n"
-                f"Питомцев передано: <b>{done_count}</b>\n"
-                f"Основной аккаунт отключён."
-                + (f"\n⏱ Время: <b>{elapsed_str}</b>" if elapsed_str else ""),
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            logging.error("Autopilot done notify user=%s: %s", user_id, e)
+    # Check farming accounts — did they get the pet?
+    for entry_id, acc_id, username in get_autopilot_farming_entries(user_id):
+        ok, pets, _ = await get_account_pets(ao_key, acc_id)
+        if not ok:
+            continue
+        if any(p.get("pet_kind") in pet_ids_set for p in pets):
+            if trade_config_id:
+                await set_accounts_config(ao_key, [username], trade_config_id)
+            await set_accounts_enabled(ao_key, [username], False)
+            await set_accounts_enabled(ao_key, [username], True)
+            set_autopilot_entry_status(entry_id, "trading")
 
 
 async def run_autopilot_transfer(bot: Bot):
@@ -353,9 +323,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.5.1 запущен ✅")
+    print("OxySync Bot v1.5.2 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.5.1</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.5.2</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

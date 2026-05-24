@@ -9,16 +9,17 @@ from api.accountsops import get_accounts_with_pet_details, set_accounts_enabled,
 from database import (
     get_panel,
     get_autopilot_config,
-    save_autopilot_main, save_autopilot_config_id,
-    save_autopilot_batch_size, save_autopilot_check_interval, save_autopilot_stuck_timeout,
+    save_autopilot_main, save_autopilot_config_id, save_autopilot_farm_config_id,
+    save_autopilot_check_interval, save_autopilot_stuck_timeout,
     set_autopilot_running, set_autopilot_started_at,
-    get_autopilot_active_count, get_autopilot_done_count,
-    get_autopilot_active_entries, get_autopilot_pending_entries,
+    get_autopilot_farming_entries, get_autopilot_trading_entries,
+    get_autopilot_farming_count, get_autopilot_trading_count,
+    increment_autopilot_trades_done, get_autopilot_trades_done,
     add_autopilot_queue, clear_autopilot_queue,
     set_autopilot_entry_status,
     get_autopilot_pets, add_autopilot_pet, remove_autopilot_pet,
 )
-from keyboards import autopilot_kb, ap_pets_kb, cancel_to_ap_kb, configs_kb
+from keyboards import autopilot_kb, ap_pets_kb, cancel_to_ap_kb, configs_kb, farm_configs_kb
 
 router = Router()
 
@@ -26,49 +27,50 @@ router = Router()
 class APStates(StatesGroup):
     waiting_main_account   = State()
     waiting_pet_id         = State()
-    waiting_batch_size     = State()
     waiting_check_interval = State()
     waiting_stuck_timeout  = State()
 
 
 def _build_autopilot_page(user_id: int) -> tuple[str, any]:
-    cfg          = get_autopilot_config(user_id)
-    running      = cfg["running"]      if cfg else False
-    main_account = cfg["main_account"] if cfg else None
-    config_id    = cfg["config_id"]    if cfg else None
-    batch_size     = cfg["batch_size"]     if cfg else 10
+    cfg            = get_autopilot_config(user_id)
+    running        = cfg["running"]        if cfg else False
+    main_account   = cfg["main_account"]   if cfg else None
+    config_id      = cfg["config_id"]      if cfg else None
+    farm_config_id = cfg["farm_config_id"] if cfg else None
     check_interval = cfg["check_interval"] if cfg else 30
     stuck_timeout  = cfg["stuck_timeout"]  if cfg else 10
     pets           = get_autopilot_pets(user_id)
     pet_count      = len(pets)
 
     lines = ["🤖 <b>Авто-пилот</b>", ""]
-    main_str   = f"<code>{main_account}</code>" if main_account else "<i>не задан</i>"
-    config_str = f"<code>{config_id}</code>"     if config_id    else "<i>не задан</i>"
+    main_str       = f"<code>{main_account}</code>"   if main_account   else "<i>не задан</i>"
+    trade_cfg_str  = f"<code>{config_id}</code>"      if config_id      else "<i>не задан</i>"
+    farm_cfg_str   = f"<code>{farm_config_id}</code>" if farm_config_id else "<i>не задан</i>"
     lines.append(f"👤 Аккаунт: {main_str}")
     if pets:
         for _, pid in pets:
             lines.append(f"🦆 <code>{pid}</code>")
     else:
         lines.append("🦆 Петы: <i>не заданы</i>")
-    lines.append(f"⚙️ Конфиг: {config_str}")
-    lines.append(f"👥 Одновременно: <b>{batch_size}</b>  ·  ⏱ Проверка: <b>{check_interval}с</b>  ·  ⏰ Стак: <b>{stuck_timeout}м</b>")
+    lines.append(f"🔄 Трейд конфиг: {trade_cfg_str}")
+    lines.append(f"🌾 Фарм конфиг: {farm_cfg_str}")
+    lines.append(f"⏱ Проверка: <b>{check_interval}с</b>  ·  ⏰ Стак: <b>{stuck_timeout}м</b>")
     lines.append("")
 
     if running:
-        active_count  = get_autopilot_active_count(user_id)
-        pending_count = len(get_autopilot_pending_entries(user_id))
-        done_count    = get_autopilot_done_count(user_id)
+        farming_count = get_autopilot_farming_count(user_id)
+        trading_count = get_autopilot_trading_count(user_id)
+        trades_done   = get_autopilot_trades_done(user_id)
         lines.append(
             f"▶️ <b>Запущен</b>  ·  "
-            f"Активных: {active_count}/{batch_size}  ·  "
-            f"Ожидает: {pending_count}  ·  "
-            f"Готово: {done_count}"
+            f"Фармит: {farming_count}  ·  "
+            f"Торгует: {trading_count}  ·  "
+            f"Сделок: {trades_done}"
         )
     else:
         lines.append("⏹ <b>Остановлен</b>")
 
-    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, running, batch_size, check_interval, stuck_timeout)
+    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, farm_config_id, running, check_interval, stuck_timeout)
 
 
 async def _show_autopilot(target, user_id: int, edit: bool = False):
@@ -176,46 +178,41 @@ async def ap_pick_config(callback: CallbackQuery):
     await _show_autopilot(callback.message, callback.from_user.id, edit=True)
 
 
-# ─── Задать размер батча ─────────────────────────────────────────────────────
+# ─── Задать фарм конфиг ───────────────────────────────────────────────────────
 
-@router.callback_query(lambda c: c.data == "ap_set_batch")
-async def ap_set_batch(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(APStates.waiting_batch_size)
-    await state.update_data(prompt_msg_id=callback.message.message_id)
-    await callback.message.edit_text(
-        "👥 Введи количество аккаунтов, которые будут работать одновременно:\n\n"
-        "<i>Например: <code>5</code> — бот будет держать 5 активных аккаунтов.\n"
-        "Допустимо от 1 до 50.</i>",
-        parse_mode="HTML",
-        reply_markup=cancel_to_ap_kb(),
-    )
+@router.callback_query(lambda c: c.data == "ap_set_farm_config")
+async def ap_set_farm_config(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    ao_key  = get_panel(user_id)
+    if not ao_key:
+        await callback.answer("❌ AccountsOps не подключён.", show_alert=True)
+        return
     await callback.answer()
+    ok, configs, err = await get_configs(ao_key)
+    if not ok or not configs:
+        await callback.message.edit_text(
+            f"🌾 <b>Фарм конфиг</b>\n\n❌ Не удалось загрузить: {err or 'список пуст'}",
+            parse_mode="HTML",
+            reply_markup=cancel_to_ap_kb(),
+        )
+        return
+    await callback.message.edit_text(
+        "🌾 <b>Выбери фарм конфиг</b>:",
+        parse_mode="HTML",
+        reply_markup=farm_configs_kb(configs),
+    )
 
 
-@router.message(APStates.waiting_batch_size)
-async def ap_receive_batch(message: Message, state: FSMContext, bot: Bot):
-    if not message.text:
+@router.callback_query(lambda c: c.data.startswith("ap_farm_cfg:"))
+async def ap_pick_farm_config(callback: CallbackQuery):
+    try:
+        config_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка", show_alert=True)
         return
-    text = message.text.strip()
-    await message.delete()
-    data = await state.get_data()
-    prompt_msg_id = data.get("prompt_msg_id")
-    if not text.isdigit() or not (1 <= int(text) <= 50):
-        await message.answer("❌ Введи число от 1 до 50:", reply_markup=cancel_to_ap_kb())
-        return
-    save_autopilot_batch_size(message.from_user.id, int(text))
-    await state.clear()
-    page_text, kb = _build_autopilot_page(message.from_user.id)
-    if prompt_msg_id:
-        try:
-            await bot.edit_message_text(
-                page_text, chat_id=message.chat.id, message_id=prompt_msg_id,
-                parse_mode="HTML", reply_markup=kb,
-            )
-            return
-        except TelegramBadRequest:
-            pass
-    await message.answer(page_text, parse_mode="HTML", reply_markup=kb)
+    save_autopilot_farm_config_id(callback.from_user.id, config_id)
+    await callback.answer(f"✅ Фарм конфиг {config_id} сохранён")
+    await _show_autopilot(callback.message, callback.from_user.id, edit=True)
 
 
 # ─── Задать интервал проверки ─────────────────────────────────────────────────
@@ -391,13 +388,17 @@ async def ap_start(callback: CallbackQuery):
         await callback.answer("❌ AccountsOps не подключён.", show_alert=True)
         return
 
-    cfg = get_autopilot_config(user_id)
+    cfg  = get_autopilot_config(user_id)
     pets = get_autopilot_pets(user_id)
     if not cfg or not cfg["main_account"] or not pets:
         await callback.answer("❌ Задай основной аккаунт и хотя бы один пет.", show_alert=True)
         return
 
     await callback.answer("⏳ Запускаю...")
+    pet_count      = len(pets)
+    config_id      = cfg.get("config_id")
+    farm_config_id = cfg.get("farm_config_id")
+
     await callback.message.edit_text(
         "🤖 <b>Авто-пилот</b>\n\n⏳ Отключаю все аккаунты...",
         parse_mode="HTML",
@@ -419,121 +420,55 @@ async def ap_start(callback: CallbackQuery):
         parse_mode="HTML",
     )
 
-    config_id  = cfg.get("config_id")
-    pet_count  = len(pets)
-    pet_ids    = [pid for _, pid in pets]
-
     ok_main, _, err_main = await set_accounts_enabled(ao_key, [cfg["main_account"]], True)
     if not ok_main:
         await callback.message.edit_text(
             f"🤖 <b>Авто-пилот</b>\n\n❌ Ошибка включения основного аккаунта: {err_main}",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, False),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False),
         )
         return
 
     await callback.message.edit_text(
-        "🤖 <b>Авто-пилот</b>\n\n⏳ Сканирую аккаунты с петами...",
+        "🤖 <b>Авто-пилот</b>\n\n⏳ Собираю список аккаунтов...",
         parse_mode="HTML",
     )
 
-    # Scan all pets in parallel, deduplicate by account_id
-    scan_results = await asyncio.gather(
-        *[get_accounts_with_pet_details(ao_key, pid) for pid in pet_ids],
-        return_exceptions=True,
-    )
-    seen_ids: set = set()
-    accounts: list[tuple] = []
-    scan_errors = []
-    for res in scan_results:
-        if isinstance(res, BaseException):
-            continue
-        ok, accs, err = res
-        if not ok:
-            scan_errors.append(err)
-            continue
-        for acc_id, username in accs:
-            if acc_id not in seen_ids:
-                seen_ids.add(acc_id)
-                accounts.append((acc_id, username))
-
-    if not accounts and scan_errors:
-        await set_accounts_enabled(ao_key, [cfg["main_account"]], False)
-        await callback.message.edit_text(
-            f"🤖 <b>Авто-пилот</b>\n\n❌ Ошибка сканирования: {scan_errors[0]}",
-            parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, False, auto_en),
-        )
-        return
-
-    # Fetch face and dead account sets in parallel
     face_set, dead_set = await asyncio.gather(
         get_usernames_by_tag(ao_key, "status:face"),
         get_usernames_by_tag(ao_key, "status:dead"),
     )
 
-    main_lower = cfg["main_account"].lower()
-    queue_accounts  = []
-    skipped_face    = []
-    skipped_dead    = []
-    for acc_id, username in accounts:
-        u = username.lower()
-        if u == main_lower:
+    main_lower    = cfg["main_account"].lower()
+    farm_accounts = []
+    for acc in all_accounts or []:
+        username = acc.get("username") or acc.get("name", "")
+        if not username:
             continue
-        if u in face_set:
-            skipped_face.append(username)
-        elif u in dead_set:
-            skipped_dead.append(username)
-        else:
-            queue_accounts.append((acc_id, username))
+        u = username.lower()
+        if u == main_lower or u in face_set or u in dead_set:
+            continue
+        acc_id = str(acc.get("id") or acc.get("account_id", ""))
+        farm_accounts.append((acc_id, username))
 
-    if not queue_accounts:
+    if not farm_accounts:
         await set_accounts_enabled(ao_key, [cfg["main_account"]], False)
-        skip_lines = []
-        if skipped_face:
-            skip_lines.append(f"⚠️ С петом, но статус face: <b>{len(skipped_face)}</b>")
-        if skipped_dead:
-            skip_lines.append(f"💀 С петом, но мёртвые: <b>{len(skipped_dead)}</b>")
-        msg = "🤖 <b>Авто-пилот</b>\n\nℹ️ Рабочих аккаунтов с петами не найдено.\nОсновной аккаунт отключён."
-        if skip_lines:
-            msg += "\n\n" + "\n".join(skip_lines)
         await callback.message.edit_text(
-            msg,
+            "🤖 <b>Авто-пилот</b>\n\nℹ️ Нет доступных аккаунтов для фарма.\nОсновной аккаунт отключён.",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, False),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False),
         )
         return
 
+    if farm_config_id:
+        await set_accounts_config(ao_key, [u for _, u in farm_accounts], farm_config_id)
+
+    await set_accounts_enabled(ao_key, [u for _, u in farm_accounts], True)
+
     clear_autopilot_queue(user_id)
-    add_autopilot_queue(user_id, queue_accounts)
+    add_autopilot_queue(user_id, farm_accounts, status='farming')
     set_autopilot_started_at(user_id)
     set_autopilot_running(user_id, True)
-
-    if config_id:
-        all_usernames = [u for _, u in queue_accounts]
-        await set_accounts_config(ao_key, all_usernames, config_id)
-
-    batch_size  = cfg.get("batch_size") or 10
-    first_batch = get_autopilot_pending_entries(user_id)[:batch_size]
-    if first_batch:
-        await set_accounts_enabled(ao_key, [u for _, _, u in first_batch], True)
-        for entry_id, _, _ in first_batch:
-            set_autopilot_entry_status(entry_id, "active")
-
-    # Build skip notice if any accounts were filtered out
-    skip_parts = []
-    if skipped_face:
-        skip_parts.append(f"⚠️ Пропущено (face): <b>{len(skipped_face)}</b>")
-    if skipped_dead:
-        skip_parts.append(f"💀 Пропущено (мёртвые): <b>{len(skipped_dead)}</b>")
-
-    if skip_parts:
-        await callback.message.answer(
-            "🤖 <b>Авто-пилот</b> — найдены пропущенные аккаунты\n\n"
-            + "\n".join(skip_parts)
-            + f"\n✅ В очереди: <b>{len(queue_accounts)}</b>",
-            parse_mode="HTML",
-        )
 
     await _show_autopilot(callback.message, user_id, edit=True)
 
@@ -548,9 +483,11 @@ async def ap_stop(callback: CallbackQuery):
     await callback.answer("⏹ Останавливаю...")
 
     if ao_key:
-        active = get_autopilot_active_entries(user_id)
-        if active:
-            await set_accounts_enabled(ao_key, [u for _, _, u in active], False)
+        farming = get_autopilot_farming_entries(user_id)
+        trading = get_autopilot_trading_entries(user_id)
+        all_active = farming + trading
+        if all_active:
+            await set_accounts_enabled(ao_key, [u for _, _, u in all_active], False)
         cfg = get_autopilot_config(user_id)
         if cfg and cfg["main_account"]:
             await set_accounts_enabled(ao_key, [cfg["main_account"]], False)

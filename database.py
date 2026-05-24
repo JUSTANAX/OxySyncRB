@@ -99,6 +99,8 @@ def init_db():
         "ALTER TABLE autopilot_config ADD COLUMN last_checked_at TEXT",
         "ALTER TABLE autopilot_config ADD COLUMN stuck_timeout INTEGER DEFAULT 10",
         "ALTER TABLE autopilot_queue ADD COLUMN activated_at TEXT",
+        "ALTER TABLE autopilot_config ADD COLUMN farm_config_id INTEGER",
+        "ALTER TABLE autopilot_config ADD COLUMN trades_done INTEGER DEFAULT 0",
     ):
         try:
             conn.execute(stmt)
@@ -381,7 +383,7 @@ def get_autopilot_config(user_id: int) -> dict | None:
     conn = _get_conn()
     row = conn.execute(
         "SELECT main_account, pet_id, config_id, running, started_at, batch_size, "
-        "check_interval, last_checked_at, stuck_timeout "
+        "check_interval, last_checked_at, stuck_timeout, farm_config_id, trades_done "
         "FROM autopilot_config WHERE user_id = ?",
         (user_id,),
     ).fetchone()
@@ -394,6 +396,8 @@ def get_autopilot_config(user_id: int) -> dict | None:
         "check_interval":  row[6] if row[6] is not None else 30,
         "last_checked_at": row[7],
         "stuck_timeout":   row[8] if row[8] is not None else 10,
+        "farm_config_id":  row[9],
+        "trades_done":     row[10] if row[10] is not None else 0,
     }
 
 
@@ -504,12 +508,12 @@ def get_users_with_autopilot_running() -> list[tuple]:
     ).fetchall()
 
 
-def add_autopilot_queue(user_id: int, entries: list[tuple]):
+def add_autopilot_queue(user_id: int, entries: list[tuple], status: str = 'farming'):
     """entries = [(account_id, username), ...]"""
     conn = _get_conn()
     conn.executemany(
-        "INSERT INTO autopilot_queue (user_id, account_id, username) VALUES (?, ?, ?)",
-        [(user_id, acc_id, username) for acc_id, username in entries],
+        "INSERT INTO autopilot_queue (user_id, account_id, username, status) VALUES (?, ?, ?, ?)",
+        [(user_id, acc_id, username, status) for acc_id, username in entries],
     )
 
 
@@ -563,12 +567,74 @@ def save_autopilot_stuck_timeout(user_id: int, minutes: int):
     )
 
 
+def save_autopilot_farm_config_id(user_id: int, config_id: int):
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO autopilot_config (user_id, farm_config_id) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET farm_config_id = excluded.farm_config_id",
+        (user_id, config_id),
+    )
+
+
+def get_autopilot_farming_entries(user_id: int) -> list[tuple]:
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT id, account_id, username FROM autopilot_queue "
+        "WHERE user_id = ? AND status = 'farming' ORDER BY id",
+        (user_id,),
+    ).fetchall()
+
+
+def get_autopilot_trading_entries(user_id: int) -> list[tuple]:
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT id, account_id, username FROM autopilot_queue "
+        "WHERE user_id = ? AND status = 'trading' ORDER BY id",
+        (user_id,),
+    ).fetchall()
+
+
+def get_autopilot_farming_count(user_id: int) -> int:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM autopilot_queue WHERE user_id = ? AND status = 'farming'",
+        (user_id,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def get_autopilot_trading_count(user_id: int) -> int:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM autopilot_queue WHERE user_id = ? AND status = 'trading'",
+        (user_id,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def increment_autopilot_trades_done(user_id: int):
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE autopilot_config SET trades_done = COALESCE(trades_done, 0) + 1 WHERE user_id = ?",
+        (user_id,),
+    )
+
+
+def get_autopilot_trades_done(user_id: int) -> int:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COALESCE(trades_done, 0) FROM autopilot_config WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
 def get_autopilot_stuck_entries(user_id: int, timeout_seconds: int) -> list[tuple]:
     conn = _get_conn()
     cutoff = (datetime.utcnow() - timedelta(seconds=timeout_seconds)).strftime("%Y-%m-%d %H:%M:%S")
     return conn.execute(
         "SELECT id, account_id, username FROM autopilot_queue "
-        "WHERE user_id = ? AND status = 'active' "
+        "WHERE user_id = ? AND status = 'trading' "
         "AND activated_at IS NOT NULL AND activated_at <= ?",
         (user_id, cutoff),
     ).fetchall()
@@ -576,7 +642,7 @@ def get_autopilot_stuck_entries(user_id: int, timeout_seconds: int) -> list[tupl
 
 def set_autopilot_entry_status(entry_id: int, status: str):
     conn = _get_conn()
-    if status == "active":
+    if status in ("active", "trading"):
         conn.execute(
             "UPDATE autopilot_queue SET status = ?, activated_at = ? WHERE id = ?",
             (status, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), entry_id),

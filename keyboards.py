@@ -64,29 +64,29 @@ def autopilot_kb(
     main_account: str | None,
     pet_count: int,
     config_id: int | None,
+    farm_config_id: int | None,
     running: bool,
-    batch_size: int = 10,
     check_interval: int = 30,
     stuck_timeout: int = 10,
 ) -> InlineKeyboardMarkup:
     rows = []
 
-    main_label = f"👤 {main_account}" if main_account else "👤 Задать основной аккаунт"
-    pet_label  = f"🦆 Петы: {pet_count}" if pet_count > 0 else "🦆 Добавить петы"
+    main_label  = f"👤 {main_account}" if main_account else "👤 Задать основной аккаунт"
+    pet_label   = f"🦆 Петы: {pet_count}" if pet_count > 0 else "🦆 Добавить петы"
 
-    cfg_label      = f"⚙️ Конфиг: {config_id}" if config_id else "⚙️ Задать конфиг"
-    batch_label    = f"👥 Одновременно: {batch_size}"
-    interval_label = f"⏱ Проверка: {check_interval}с"
+    trade_cfg_label = f"🔄 Трейд конфиг: {config_id}" if config_id else "🔄 Трейд конфиг: не задан"
+    farm_cfg_label  = f"🌾 Фарм конфиг: {farm_config_id}" if farm_config_id else "🌾 Фарм конфиг: не задан"
+    interval_label  = f"⏱ Проверка: {check_interval}с"
+    stuck_label     = f"⏰ Стак-таймаут: {stuck_timeout}м"
 
-    rows.append([InlineKeyboardButton(text=main_label,      callback_data="ap_set_main")])
-    rows.append([InlineKeyboardButton(text=pet_label,       callback_data="ap_set_pet")])
-    rows.append([InlineKeyboardButton(text=cfg_label,       callback_data="ap_set_config")])
-    stuck_label = f"⏰ Стак-таймаут: {stuck_timeout}м"
+    rows.append([InlineKeyboardButton(text=main_label,       callback_data="ap_set_main")])
+    rows.append([InlineKeyboardButton(text=pet_label,        callback_data="ap_set_pet")])
+    rows.append([InlineKeyboardButton(text=trade_cfg_label,  callback_data="ap_set_config")])
+    rows.append([InlineKeyboardButton(text=farm_cfg_label,   callback_data="ap_set_farm_config")])
     rows.append([
-        InlineKeyboardButton(text=batch_label,    callback_data="ap_set_batch"),
         InlineKeyboardButton(text=interval_label, callback_data="ap_set_interval"),
+        InlineKeyboardButton(text=stuck_label,    callback_data="ap_set_stuck"),
     ])
-    rows.append([InlineKeyboardButton(text=stuck_label, callback_data="ap_set_stuck")])
 
     if running:
         rows.append([
@@ -97,6 +97,19 @@ def autopilot_kb(
         rows.append([InlineKeyboardButton(text="▶️ Запустить", callback_data="ap_start")])
 
     rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="automation")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def farm_configs_kb(configs: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for cfg in configs:
+        cfg_id   = cfg.get("id")
+        cfg_name = cfg.get("name") or str(cfg_id)
+        rows.append([InlineKeyboardButton(
+            text=f"🌾 {cfg_name}",
+            callback_data=f"ap_farm_cfg:{cfg_id}",
+        )])
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="autopilot")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
