@@ -281,6 +281,15 @@ async def set_accounts_config(api_key: str, usernames: list[str], config_id: int
     return await _post(api_key, "/api/accounts/config", {"usernames": usernames, "config_id": config_id})
 
 
+async def get_configs(api_key: str) -> tuple[bool, list[dict], str]:
+    ok, data, err = await _get(api_key, "/api/configs")
+    if not ok:
+        return False, [], err
+    if isinstance(data, list):
+        return True, data, ""
+    return True, [], ""
+
+
 async def get_accounts_with_pet_details(api_key: str, pet_kind: str) -> tuple[bool, list, str]:
     """Returns list of (account_id, username) for accounts that have the specified pet_kind."""
     ok, accounts, err = await get_trackstats_accounts(api_key)

@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest
 
-from api.accountsops import get_accounts_with_pet_details, set_accounts_enabled, set_accounts_config, get_trackstats_accounts
+from api.accountsops import get_accounts_with_pet_details, set_accounts_enabled, set_accounts_config, get_trackstats_accounts, get_configs
 from database import (
     get_panel,
     get_autopilot_config,
@@ -16,7 +16,7 @@ from database import (
     set_autopilot_entry_status,
     get_auto_enable_pet, set_auto_enable_pet,
 )
-from keyboards import autopilot_kb, cancel_to_ap_kb, auto_enable_pet_kb
+from keyboards import autopilot_kb, cancel_to_ap_kb, auto_enable_pet_kb, configs_kb
 
 router = Router()
 
@@ -24,7 +24,6 @@ router = Router()
 class APStates(StatesGroup):
     waiting_main_account = State()
     waiting_pet_id       = State()
-    waiting_config_id    = State()
 
 
 def _build_autopilot_page(user_id: int) -> tuple[str, any]:
@@ -116,27 +115,38 @@ async def ap_receive_main(message: Message, state: FSMContext):
 # ─── Задать конфиг ───────────────────────────────────────────────────────────
 
 @router.callback_query(lambda c: c.data == "ap_set_config")
-async def ap_set_config(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(APStates.waiting_config_id)
-    await callback.message.edit_text(
-        "⚙️ Введи <b>ID конфига</b>:\n\n"
-        "<i>Числовой ID из AccountsOps, например: <code>487</code></i>",
-        parse_mode="HTML",
-        reply_markup=cancel_to_ap_kb(),
-    )
-    await callback.answer()
-
-
-@router.message(APStates.waiting_config_id)
-async def ap_receive_config(message: Message, state: FSMContext):
-    text = message.text.strip()
-    await message.delete()
-    if not text.isdigit() or int(text) <= 0:
-        await message.answer("❌ Введи корректный числовой ID:", reply_markup=cancel_to_ap_kb())
+async def ap_set_config(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    ao_key  = get_panel(user_id)
+    if not ao_key:
+        await callback.answer("❌ AccountsOps не подключён.", show_alert=True)
         return
-    save_autopilot_config_id(message.from_user.id, int(text))
-    await state.clear()
-    await _show_autopilot(message, message.from_user.id)
+    await callback.answer()
+    ok, configs, err = await get_configs(ao_key)
+    if not ok or not configs:
+        await callback.message.edit_text(
+            f"⚙️ <b>Конфиги</b>\n\n❌ Не удалось загрузить: {err or 'список пуст'}",
+            parse_mode="HTML",
+            reply_markup=cancel_to_ap_kb(),
+        )
+        return
+    await callback.message.edit_text(
+        "⚙️ <b>Выбери конфиг</b>:",
+        parse_mode="HTML",
+        reply_markup=configs_kb(configs),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("ap_cfg:"))
+async def ap_pick_config(callback: CallbackQuery):
+    try:
+        config_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    save_autopilot_config_id(callback.from_user.id, config_id)
+    await callback.answer(f"✅ Конфиг {config_id} сохранён")
+    await _show_autopilot(callback.message, callback.from_user.id, edit=True)
 
 
 # ─── Задать ID пета ───────────────────────────────────────────────────────────

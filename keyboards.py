@@ -96,6 +96,19 @@ def cancel_to_ap_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def configs_kb(configs: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for cfg in configs:
+        cfg_id   = cfg.get("id")
+        cfg_name = cfg.get("name") or str(cfg_id)
+        rows.append([InlineKeyboardButton(
+            text=f"⚙️ {cfg_name}",
+            callback_data=f"ap_cfg:{cfg_id}",
+        )])
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="autopilot")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def fu_no_key_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔑 Подключить ZeroPoint", callback_data="fu_set_key")],
