@@ -46,13 +46,6 @@ def automation_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def auto_enable_pet_kb(enabled: bool) -> InlineKeyboardMarkup:
-    toggle_label = "✅ Включено" if enabled else "❌ Выключено"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=toggle_label, callback_data="aep_toggle")],
-        [InlineKeyboardButton(text="🔙 Назад",    callback_data="autopilot")],
-    ])
-
 
 def ap_pets_kb(pets: list[tuple]) -> InlineKeyboardMarkup:
     rows = []
@@ -72,7 +65,6 @@ def autopilot_kb(
     pet_count: int,
     config_id: int | None,
     running: bool,
-    auto_enabled: bool,
     batch_size: int = 10,
     check_interval: int = 30,
     stuck_timeout: int = 10,
@@ -104,8 +96,6 @@ def autopilot_kb(
     else:
         rows.append([InlineKeyboardButton(text="▶️ Запустить", callback_data="ap_start")])
 
-    aep_label = "🦆 Auto-Enable-Pet: ✅" if auto_enabled else "🦆 Auto-Enable-Pet: ❌"
-    rows.append([InlineKeyboardButton(text=aep_label, callback_data="auto_enable_pet")])
     rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="automation")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

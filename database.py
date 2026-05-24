@@ -62,12 +62,6 @@ def init_db():
             PRIMARY KEY (user_id, filter_text)
         );
 
-        CREATE TABLE IF NOT EXISTS auto_enable_pet (
-            user_id        INTEGER PRIMARY KEY,
-            enabled        INTEGER DEFAULT 0,
-            last_notified  TEXT
-        );
-
         CREATE TABLE IF NOT EXISTS autopilot_config (
             user_id       INTEGER PRIMARY KEY,
             main_account  TEXT,
@@ -377,25 +371,6 @@ def remove_watched_pet(user_id: int, filter_text: str):
     conn.execute(
         "DELETE FROM watched_pets WHERE user_id = ? AND filter_text = ?",
         (user_id, filter_text),
-    )
-
-
-# ─── Auto-Enable-Pet ──────────────────────────────────────────────────────────
-
-def get_auto_enable_pet(user_id: int) -> bool:
-    conn = _get_conn()
-    row = conn.execute(
-        "SELECT enabled FROM auto_enable_pet WHERE user_id = ?", (user_id,)
-    ).fetchone()
-    return bool(row and row[0])
-
-
-def set_auto_enable_pet(user_id: int, enabled: bool):
-    conn = _get_conn()
-    conn.execute(
-        "INSERT INTO auto_enable_pet (user_id, enabled) VALUES (?, ?) "
-        "ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled",
-        (user_id, int(enabled)),
     )
 
 

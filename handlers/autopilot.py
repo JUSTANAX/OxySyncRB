@@ -17,9 +17,8 @@ from database import (
     add_autopilot_queue, clear_autopilot_queue,
     set_autopilot_entry_status,
     get_autopilot_pets, add_autopilot_pet, remove_autopilot_pet,
-    get_auto_enable_pet, set_auto_enable_pet,
 )
-from keyboards import autopilot_kb, ap_pets_kb, cancel_to_ap_kb, auto_enable_pet_kb, configs_kb
+from keyboards import autopilot_kb, ap_pets_kb, cancel_to_ap_kb, configs_kb
 
 router = Router()
 
@@ -40,7 +39,6 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     batch_size     = cfg["batch_size"]     if cfg else 10
     check_interval = cfg["check_interval"] if cfg else 30
     stuck_timeout  = cfg["stuck_timeout"]  if cfg else 10
-    auto_enabled   = get_auto_enable_pet(user_id)
     pets           = get_autopilot_pets(user_id)
     pet_count      = len(pets)
 
@@ -70,7 +68,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     else:
         lines.append("⏹ <b>Остановлен</b>")
 
-    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, running, auto_enabled, batch_size, check_interval, stuck_timeout)
+    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, running, batch_size, check_interval, stuck_timeout)
 
 
 async def _show_autopilot(target, user_id: int, edit: bool = False):
@@ -422,7 +420,6 @@ async def ap_start(callback: CallbackQuery):
     )
 
     config_id  = cfg.get("config_id")
-    auto_en    = get_auto_enable_pet(user_id)
     pet_count  = len(pets)
     pet_ids    = [pid for _, pid in pets]
 
@@ -431,7 +428,7 @@ async def ap_start(callback: CallbackQuery):
         await callback.message.edit_text(
             f"🤖 <b>Авто-пилот</b>\n\n❌ Ошибка включения основного аккаунта: {err_main}",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, False, auto_en),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, False),
         )
         return
 
@@ -503,7 +500,7 @@ async def ap_start(callback: CallbackQuery):
         await callback.message.edit_text(
             msg,
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, False, auto_en),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, False),
         )
         return
 
@@ -562,29 +559,3 @@ async def ap_stop(callback: CallbackQuery):
     set_autopilot_running(user_id, False)
     await _show_autopilot(callback.message, user_id, edit=True)
 
-
-# ─── Auto-Enable-Pet ──────────────────────────────────────────────────────────
-
-@router.callback_query(lambda c: c.data == "auto_enable_pet")
-async def open_auto_enable_pet(callback: CallbackQuery):
-    enabled = get_auto_enable_pet(callback.from_user.id)
-    await callback.message.edit_text(
-        "🦆 <b>Auto-Enable-Pet</b>\n\n"
-        "Бот каждые 10 минут проверяет аккаунты. "
-        "Если у аккаунта есть пет "
-        "<code>soggy_spring_2026_strawberry_shortcake_ducky</code> — "
-        "автоматически включает его.",
-        parse_mode="HTML",
-        reply_markup=auto_enable_pet_kb(enabled),
-    )
-    await callback.answer()
-
-
-@router.callback_query(lambda c: c.data == "aep_toggle")
-async def aep_toggle(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    new_val = not get_auto_enable_pet(user_id)
-    set_auto_enable_pet(user_id, new_val)
-    status = "включён ✅" if new_val else "выключен ❌"
-    await callback.answer(f"🦆 Auto-Enable-Pet {status}")
-    await callback.message.edit_reply_markup(reply_markup=auto_enable_pet_kb(new_val))
