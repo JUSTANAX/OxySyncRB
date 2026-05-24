@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest
 
-from api.accountsops import get_accounts_with_pet_details, set_accounts_enabled
+from api.accountsops import get_accounts_with_pet_details, set_accounts_enabled, get_trackstats_accounts
 from database import (
     get_panel,
     get_autopilot_config,
@@ -151,6 +151,22 @@ async def ap_start(callback: CallbackQuery):
         return
 
     await callback.answer("⏳ Запускаю...")
+    await callback.message.edit_text(
+        "🤖 <b>Авто-пилот</b>\n\n⏳ Отключаю все аккаунты...",
+        parse_mode="HTML",
+    )
+
+    ok_all, all_accounts, _ = await get_trackstats_accounts(ao_key)
+    if ok_all and all_accounts:
+        all_usernames = [
+            acc.get("username") or acc.get("name", "")
+            for acc in all_accounts
+            if acc.get("username") or acc.get("name")
+        ]
+        all_usernames = [u for u in all_usernames if u]
+        if all_usernames:
+            await set_accounts_enabled(ao_key, all_usernames, False)
+
     await callback.message.edit_text(
         "🤖 <b>Авто-пилот</b>\n\n⏳ Включаю основной аккаунт...",
         parse_mode="HTML",
