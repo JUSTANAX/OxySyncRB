@@ -105,7 +105,8 @@ async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
     if not accounts:
         return True, {}, ""
 
-    acc_ids = [acc["id"] for acc in accounts if acc.get("id")]
+    acc_ids = [acc["id"] for acc in accounts
+               if acc.get("id") and acc.get("total_pets", 1) > 0]
     if not acc_ids:
         return True, {}, ""
 
@@ -172,7 +173,8 @@ async def get_accounts_with_pet(api_key: str, pet_kind: str) -> tuple[bool, list
         return True, [], ""
 
     accs = [(acc.get("id"), acc.get("username") or acc.get("name", ""))
-            for acc in accounts if acc.get("id")]
+            for acc in accounts
+            if acc.get("id") and acc.get("total_pets", 1) > 0]
     if not accs:
         return True, [], ""
 
