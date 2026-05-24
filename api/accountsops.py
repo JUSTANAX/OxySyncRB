@@ -342,7 +342,16 @@ async def set_accounts_enabled(api_key: str, usernames: list[str], enabled: bool
 
 
 async def set_accounts_config(api_key: str, usernames: list[str], config_id: int) -> tuple[bool, any, str]:
-    return await _post(api_key, "/api/accounts/config", {"usernames": usernames, "config_id": config_id})
+    CHUNK = 50
+    last_err = ""
+    for i in range(0, max(len(usernames), 1), CHUNK):
+        chunk = usernames[i:i + CHUNK]
+        ok, _, err = await _post(api_key, "/api/accounts/config", {"usernames": chunk, "config_id": config_id})
+        if not ok:
+            last_err = err
+    if last_err:
+        return False, None, last_err
+    return True, None, ""
 
 
 async def get_configs(api_key: str) -> tuple[bool, list[dict], str]:
