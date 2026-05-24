@@ -13,9 +13,8 @@ from database import (
     get_zp_job, save_zp_job, clear_zp_job,
     get_auto_unlock, set_auto_unlock,
     get_auto_unlock_interval, set_auto_unlock_interval,
-    get_auto_enable_pet, set_auto_enable_pet,
 )
-from keyboards import automation_kb, fu_no_key_kb, fu_kb, fu_confirm_kb, cancel_to_fu_kb, auto_enable_pet_kb
+from keyboards import automation_kb, fu_no_key_kb, fu_kb, fu_confirm_kb, cancel_to_fu_kb
 from state_cache import clear_stats_msg
 
 _INTERVAL_PRESETS = [1.0, 2.0, 3.0, 4.0, 6.0]
@@ -428,28 +427,3 @@ async def fu_interval_cycle(callback: CallbackQuery):
     await _show_fu(callback.message, user_id, edit=True)
 
 
-# ─── Auto-Enable-Pet ──────────────────────────────────────────────────────────
-
-@router.callback_query(lambda c: c.data == "auto_enable_pet")
-async def open_auto_enable_pet(callback: CallbackQuery):
-    enabled = get_auto_enable_pet(callback.from_user.id)
-    await callback.message.edit_text(
-        "🦆 <b>Auto-Enable-Pet</b>\n\n"
-        "Бот каждые 10 минут проверяет аккаунты. "
-        "Если у аккаунта есть пет "
-        "<code>soggy_spring_2026_strawberry_shortcake_ducky</code> — "
-        "автоматически включает его.",
-        parse_mode="HTML",
-        reply_markup=auto_enable_pet_kb(enabled),
-    )
-    await callback.answer()
-
-
-@router.callback_query(lambda c: c.data == "aep_toggle")
-async def aep_toggle(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    new_val = not get_auto_enable_pet(user_id)
-    set_auto_enable_pet(user_id, new_val)
-    status = "включён ✅" if new_val else "выключен ❌"
-    await callback.answer(f"🦆 Auto-Enable-Pet {status}")
-    await callback.message.edit_reply_markup(reply_markup=auto_enable_pet_kb(new_val))

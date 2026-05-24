@@ -41,8 +41,8 @@ def alerts_kb(threshold: int | None, enabled: bool) -> InlineKeyboardMarkup:
 def automation_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔓 Auto-Unlock-Face", callback_data="face_unlock")],
-        [InlineKeyboardButton(text="🦆 Auto-Enable-Pet",  callback_data="auto_enable_pet")],
-        [InlineKeyboardButton(text="🔙 Назад",             callback_data="back")],
+        [InlineKeyboardButton(text="🤖 Авто-пилот",        callback_data="autopilot")],
+        [InlineKeyboardButton(text="🔙 Назад",              callback_data="back")],
     ])
 
 
@@ -50,7 +50,45 @@ def auto_enable_pet_kb(enabled: bool) -> InlineKeyboardMarkup:
     toggle_label = "✅ Включено" if enabled else "❌ Выключено"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=toggle_label, callback_data="aep_toggle")],
-        [InlineKeyboardButton(text="🔙 Назад",    callback_data="automation")],
+        [InlineKeyboardButton(text="🔙 Назад",    callback_data="autopilot")],
+    ])
+
+
+def autopilot_kb(
+    main_account: str | None,
+    pet_id: str | None,
+    running: bool,
+    auto_enabled: bool,
+) -> InlineKeyboardMarkup:
+    rows = []
+
+    main_label = f"👤 {main_account}" if main_account else "👤 Задать основной аккаунт"
+    if pet_id:
+        short_pet = pet_id if len(pet_id) <= 28 else pet_id[:25] + "..."
+        pet_label = f"🦆 {short_pet}"
+    else:
+        pet_label = "🦆 Задать пет"
+
+    rows.append([InlineKeyboardButton(text=main_label, callback_data="ap_set_main")])
+    rows.append([InlineKeyboardButton(text=pet_label,  callback_data="ap_set_pet")])
+
+    if running:
+        rows.append([
+            InlineKeyboardButton(text="🔄 Обновить",   callback_data="ap_refresh"),
+            InlineKeyboardButton(text="⏹ Остановить", callback_data="ap_stop"),
+        ])
+    else:
+        rows.append([InlineKeyboardButton(text="▶️ Запустить", callback_data="ap_start")])
+
+    aep_label = "🦆 Auto-Enable-Pet: ✅" if auto_enabled else "🦆 Auto-Enable-Pet: ❌"
+    rows.append([InlineKeyboardButton(text=aep_label, callback_data="auto_enable_pet")])
+    rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="automation")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def cancel_to_ap_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="autopilot")]
     ])
 
 

@@ -242,6 +242,63 @@ async def get_face_accounts(api_key: str) -> tuple[bool, list[str], str]:
     return True, formatted, ""
 
 
+async def set_accounts_enabled(api_key: str, usernames: list[str], enabled: bool) -> tuple[bool, any, str]:
+    return await _post(api_key, "/api/accounts/enable", {"usernames": usernames, "enabled": enabled})
+
+
+async def get_accounts_with_pet_details(api_key: str, pet_kind: str) -> tuple[bool, list, str]:
+    """Returns list of (account_id, username) for accounts that have the specified pet_kind."""
+    ok, accounts, err = await get_trackstats_accounts(api_key)
+    if not ok:
+        return False, [], err
+    if not accounts:
+        return True, [], ""
+
+    accs = [(acc.get("id"), acc.get("username") or acc.get("name", ""))
+            for acc in accounts if acc.get("id")]
+    if not accs:
+        return True, [], ""
+
+    headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
+    sem = asyncio.Semaphore(20)
+
+    async def _do_get(session: aiohttp.ClientSession, url: str) -> list:
+        async with session.get(url, headers=headers,
+                               timeout=aiohttp.ClientTimeout(total=4)) as resp:
+            if resp.status != 200:
+                return []
+            return await resp.json()
+
+    async def fetch_one(session: aiohttp.ClientSession, aid) -> list:
+        async with sem:
+            url = f"{ACCOUNTSOPS_URL}/api/trackstats/accounts/{aid}/pets"
+            try:
+                return await asyncio.wait_for(_do_get(session, url), timeout=5.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return []
+
+    connector = aiohttp.TCPConnector(limit=25, force_close=True)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        raw = await asyncio.gather(
+            *[fetch_one(session, aid) for aid, _ in accs],
+            return_exceptions=True,
+        )
+
+    result = []
+    for (acc_id, username), pets in zip(accs, raw):
+        if isinstance(pets, BaseException) or not isinstance(pets, list):
+            continue
+        for pet in pets:
+            if pet.get("pet_kind") == pet_kind:
+                if username:
+                    result.append((acc_id, username))
+                break
+
+    return True, result, ""
+
+
 def filter_pets(pets: dict, search: str, exclude: str | None = None) -> dict:
     """Return pets whose display name contains search (case-insensitive).
     Optionally exclude pets whose name contains the exclude string."""

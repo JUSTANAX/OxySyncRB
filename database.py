@@ -67,6 +67,21 @@ def init_db():
             enabled        INTEGER DEFAULT 0,
             last_notified  TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS autopilot_config (
+            user_id       INTEGER PRIMARY KEY,
+            main_account  TEXT,
+            pet_id        TEXT,
+            running       INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS autopilot_queue (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            account_id  TEXT NOT NULL,
+            username    TEXT NOT NULL,
+            status      TEXT DEFAULT 'pending'
+        );
     """)
     # Migrations for existing databases
     for stmt in (
@@ -391,4 +406,111 @@ def set_auto_enable_pet_notified(user_id: int):
     conn.execute(
         "UPDATE auto_enable_pet SET last_notified = ? WHERE user_id = ?",
         (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), user_id),
+    )
+
+
+# ─── Autopilot ────────────────────────────────────────────────────────────────
+
+def get_autopilot_config(user_id: int) -> dict | None:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT main_account, pet_id, running FROM autopilot_config WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return {"main_account": row[0], "pet_id": row[1], "running": bool(row[2])}
+
+
+def save_autopilot_main(user_id: int, main_account: str):
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO autopilot_config (user_id, main_account) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET main_account = excluded.main_account",
+        (user_id, main_account),
+    )
+
+
+def save_autopilot_pet(user_id: int, pet_id: str):
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO autopilot_config (user_id, pet_id) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET pet_id = excluded.pet_id",
+        (user_id, pet_id),
+    )
+
+
+def set_autopilot_running(user_id: int, running: bool):
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO autopilot_config (user_id, running) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET running = excluded.running",
+        (user_id, int(running)),
+    )
+
+
+def get_users_with_autopilot_running() -> list[tuple]:
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT c.user_id, p.api_key "
+        "FROM autopilot_config c JOIN panels p ON c.user_id = p.user_id "
+        "WHERE c.running = 1"
+    ).fetchall()
+
+
+def add_autopilot_queue(user_id: int, entries: list[tuple]):
+    """entries = [(account_id, username), ...]"""
+    conn = _get_conn()
+    conn.executemany(
+        "INSERT INTO autopilot_queue (user_id, account_id, username) VALUES (?, ?, ?)",
+        [(user_id, acc_id, username) for acc_id, username in entries],
+    )
+
+
+def clear_autopilot_queue(user_id: int):
+    conn = _get_conn()
+    conn.execute("DELETE FROM autopilot_queue WHERE user_id = ?", (user_id,))
+
+
+def get_autopilot_pending_entries(user_id: int) -> list[tuple]:
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT id, account_id, username FROM autopilot_queue "
+        "WHERE user_id = ? AND status = 'pending' ORDER BY id",
+        (user_id,),
+    ).fetchall()
+
+
+def get_autopilot_active_entries(user_id: int) -> list[tuple]:
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT id, account_id, username FROM autopilot_queue "
+        "WHERE user_id = ? AND status = 'active' ORDER BY id",
+        (user_id,),
+    ).fetchall()
+
+
+def get_autopilot_active_count(user_id: int) -> int:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM autopilot_queue WHERE user_id = ? AND status = 'active'",
+        (user_id,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def get_autopilot_done_count(user_id: int) -> int:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM autopilot_queue WHERE user_id = ? AND status = 'done'",
+        (user_id,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def set_autopilot_entry_status(entry_id: int, status: str):
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE autopilot_queue SET status = ? WHERE id = ?",
+        (status, entry_id),
     )

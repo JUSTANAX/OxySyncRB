@@ -18,13 +18,22 @@ from database import (
     get_zp_job, save_zp_job, clear_zp_job,
     get_users_with_auto_enable_pet,
     get_auto_enable_pet_notified, set_auto_enable_pet_notified,
+    get_users_with_autopilot_running,
+    get_autopilot_config, set_autopilot_running,
+    get_autopilot_active_entries, get_autopilot_pending_entries,
+    get_autopilot_active_count, get_autopilot_done_count,
+    set_autopilot_entry_status,
 )
 from handlers import start
 from handlers import faceunlock
+from handlers import autopilot
 from handlers.start import build_stats_text
 from keyboards import stats_kb
 from state_cache import get_all_stats_msgs, clear_stats_msg
-from api.accountsops import get_dashboard, get_face_accounts, get_accounts_with_pet, enable_accounts
+from api.accountsops import (
+    get_dashboard, get_face_accounts, get_accounts_with_pet, enable_accounts,
+    get_account_pets, set_accounts_enabled,
+)
 from api.faceunlock import submit_job, get_status
 
 
@@ -248,6 +257,74 @@ async def auto_enable_pet_loop(bot: Bot):
             logging.error("Auto-enable-pet loop error: %s", e)
 
 
+async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
+    cfg = get_autopilot_config(user_id)
+    if not cfg or not cfg["main_account"] or not cfg["pet_id"]:
+        set_autopilot_running(user_id, False)
+        return
+
+    pet_id       = cfg["pet_id"]
+    main_account = cfg["main_account"]
+    active       = get_autopilot_active_entries(user_id)
+
+    done_ids:       list[int] = []
+    done_usernames: list[str] = []
+    for entry_id, acc_id, username in active:
+        ok, pets, _ = await get_account_pets(ao_key, acc_id)
+        if ok:
+            has_pet = any(p.get("pet_kind") == pet_id for p in pets)
+            if not has_pet:
+                done_ids.append(entry_id)
+                done_usernames.append(username)
+
+    if done_usernames:
+        await set_accounts_enabled(ao_key, done_usernames, False)
+        for eid in done_ids:
+            set_autopilot_entry_status(eid, "done")
+
+    slots = max(0, 10 - get_autopilot_active_count(user_id))
+    if slots > 0:
+        pending = get_autopilot_pending_entries(user_id)[:slots]
+        if pending:
+            new_users = [u for _, _, u in pending]
+            ok2, _, _ = await set_accounts_enabled(ao_key, new_users, True)
+            if ok2:
+                for eid, _, _ in pending:
+                    set_autopilot_entry_status(eid, "active")
+
+    if get_autopilot_active_count(user_id) == 0 and not get_autopilot_pending_entries(user_id):
+        await set_accounts_enabled(ao_key, [main_account], False)
+        set_autopilot_running(user_id, False)
+        done_count = get_autopilot_done_count(user_id)
+        try:
+            await bot.send_message(
+                user_id,
+                f"🤖 <b>Авто-пилот</b> — завершён ✅\n\n"
+                f"Питомцев передано: <b>{done_count}</b>\n"
+                "Основной аккаунт отключён.",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logging.error("Autopilot done notify user=%s: %s", user_id, e)
+
+
+async def run_autopilot_transfer(bot: Bot):
+    for user_id, ao_key in get_users_with_autopilot_running():
+        try:
+            await _process_one_autopilot(bot, user_id, ao_key)
+        except Exception as e:
+            logging.error("Autopilot transfer user=%s: %s", user_id, e)
+
+
+async def autopilot_transfer_loop(bot: Bot):
+    while True:
+        await asyncio.sleep(30)
+        try:
+            await run_autopilot_transfer(bot)
+        except Exception as e:
+            logging.error("Autopilot transfer loop error: %s", e)
+
+
 async def main():
     init_db()
     if ACCOUNTSOPS_KEY:
@@ -269,15 +346,17 @@ async def main():
 
     dp.update.middleware(OwnerOnly())
     dp.include_router(faceunlock.router)
+    dp.include_router(autopilot.router)
     dp.include_router(start.router)
     asyncio.create_task(alert_loop(bot))
     asyncio.create_task(auto_unlock_loop(bot))
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(auto_enable_pet_loop(bot))
-    print("OxySync Bot v1.3.4 запущен ✅")
+    asyncio.create_task(autopilot_transfer_loop(bot))
+    print("OxySync Bot v1.3.5 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.3.4</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.3.5</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
