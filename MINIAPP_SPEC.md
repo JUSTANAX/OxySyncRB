@@ -1,6 +1,6 @@
 # OxySync Bot — Полная техническая документация для Mini App
 
-> Версия бота: **v1.5.3**  
+> Версия бота: **v1.5.4**  
 > Стек: Python 3.11, aiogram 3.7, SQLite, aiohttp  
 > Бот **single-user** — все события от чужих Telegram ID игнорируются через middleware
 
@@ -536,18 +536,16 @@ HTTP 409 если задача уже активна.
 
 Полное состояние авто-пилота.
 
-**Ответ:**
+**Ответ (плоская структура — все поля на верхнем уровне):**
 ```json
 {
   "running": true,
-  "config": {
-    "main_account": "username",
-    "config_id": 5,
-    "farm_config_id": 3,
-    "check_interval": 30,
-    "stuck_timeout": 10,
-    "started_at": "2026-05-24T10:00:00Z"
-  },
+  "main_account": "username",
+  "config_id": 5,
+  "farm_config_id": 3,
+  "check_interval": 30,
+  "stuck_timeout": 10,
+  "started_at": "2026-05-24T10:00:00Z",
   "pets": [
     { "id": 1, "pet_id": "soggy_spring_2026_strawberry_shortcake_ducky" },
     { "id": 2, "pet_id": "basic_egg_2022_alicorn" }
@@ -568,11 +566,15 @@ HTTP 409 если задача уже активна.
 }
 ```
 
+> ⚠️ Нет обёртки `config:{}` — все поля конфига (`main_account`, `config_id`, `farm_config_id`, `check_interval`, `stuck_timeout`, `started_at`) возвращаются напрямую в корне объекта.
+
 **Поля `queue`:**
 - `farming` — аккаунты в статусе `farming` (фармят, пета нет)
 - `trading` — аккаунты в статусе `trading` (пет есть, ждут трейда)
 - `stuck` — аккаунты которые зависли (превышен `stuck_timeout`), в процессе возврата в `farming`
 - `total` — сумма всех трёх
+
+> ⚠️ Фронтенд НЕ должен читать `queue.active` / `queue.pending` / `queue.done` — эти поля не существуют.
 
 **Поле `recent`** — последние 20 событий, новые первыми.  
 Типы событий (`type`):
@@ -638,7 +640,7 @@ HTTP 409 если задача уже активна.
 - `check_interval` — INTEGER, 10–300
 - `stuck_timeout` — INTEGER, 1–60
 
-**Ответ:** обновлённый объект `config` (такой же формат как в GET /api/autopilot → config)
+**Ответ:** обновлённый конфиг в том же плоском формате что и в GET /api/autopilot (поля `main_account`, `config_id`, `farm_config_id`, `check_interval`, `stuck_timeout`)
 
 ---
 
@@ -685,7 +687,7 @@ HTTP 409 если задача уже активна.
 
 ---
 
-### GET /api/player-configs
+### GET /api/autopilot/configs
 
 Список игровых конфигов из AccountsOps (для выбора трейд/фарм конфига).
 
@@ -763,4 +765,96 @@ WHERE user_id = ?
 ORDER BY id DESC
 LIMIT 20
 ```
+
+---
+
+## 9. Что нужно поменять на фронтенде
+
+### ❌ Критические (до интеграции)
+
+**1. `queue` — названия полей**
+
+Фронтенд читает `queue.active / queue.pending / queue.done` — таких полей нет.  
+Правильные имена: `queue.farming / queue.trading / queue.stuck / queue.total`.
+
+```js
+// было
+active: ap.queue?.active, pending: ap.queue?.pending, done: ap.queue?.done
+
+// стало
+farming: ap.queue?.farming, trading: ap.queue?.trading, stuck: ap.queue?.stuck, total: ap.queue?.total
 ```
+
+---
+
+**2. `GET /api/autopilot` — плоская структура (исправлено в этом спеке)**
+
+Фронтенд читает `ap.main_account`, `ap.config_id` — это правильно.  
+Спек обновлён: обёртки `config:{}` больше нет, все поля конфига идут напрямую в корне объекта.
+
+---
+
+**3. `recent` — формат события**
+
+Фронтенд читает `r.status` (ищет `done / active`) и `r.elapsed_seconds`.  
+Правильные поля: `r.type` и `r.time`.
+
+```js
+// было
+r.status === 'done', r.elapsed_seconds
+
+// стало
+r.type === 'trade_complete', r.time  (ISO 8601 UTC)
+```
+
+Типы: `started / stopped / got_pet / trade_complete / stuck`
+
+---
+
+**4. `PUT /api/alerts` — тело запроса**
+
+Фронтенд шлёт `{ toggle: true }` — сервер это не поймёт.  
+Нужно слать `{ enabled: true }` или `{ enabled: false }`.
+
+```js
+// было
+body: { toggle: true }
+
+// стало
+body: { enabled: !currentEnabled }
+```
+
+---
+
+### ⚠️ Функциональные
+
+**5. Configs endpoint — путь изменён**
+
+```
+было:  GET /api/player-configs
+стало: GET /api/autopilot/configs
+```
+
+---
+
+**6. `zp_balance` в dashboard**
+
+`GET /api/dashboard` уже возвращает `zp_balance: { effective, reserved }` (или `null`).  
+Нужно добавить в `mapDashboard`:
+
+```js
+zpBalance: data.zp_balance?.effective ?? null
+```
+
+---
+
+### ➕ Новые поля для добавления в UI
+
+**7. `farm_config_id`** — нужен второй `ModalConfigPicker` (аналогичный пикеру трейд-конфига).  
+Вызывается кнопкой «🌾 Фарм конфиг», сохраняет через `PUT /api/autopilot/config { farm_config_id }`.
+
+**8. `batch_size` — удалён**  
+Поле `batch_size` удалено из бэкенда. Убрать степпер из UI и убрать из тела `PUT /api/autopilot/config`.
+
+**9. `trades_done`** — уже возвращается в `GET /api/autopilot` как `trades_done: N`.  
+Добавить в строку статуса, например: `Фармит: X · Торгует: Y · Сделок: Z`.
