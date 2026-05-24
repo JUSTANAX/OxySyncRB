@@ -6,10 +6,10 @@ def stats_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")],
         [
-            InlineKeyboardButton(text="🔔 Уведомления", callback_data="alerts"),
-            InlineKeyboardButton(text="🔧 Настройки",   callback_data="settings"),
+            InlineKeyboardButton(text="🔔 Уведомления",   callback_data="alerts"),
+            InlineKeyboardButton(text="🔧 Настройки",     callback_data="settings"),
         ],
-        [InlineKeyboardButton(text="🤖 Автоматизация", callback_data="automation")],
+        [InlineKeyboardButton(text="🤖 Автоматизация",    callback_data="automation")],
     ])
 
 # ─── Настройки ────────────────────────────────────────────────────────────────
@@ -42,8 +42,17 @@ def alerts_kb(threshold: int | None, enabled: bool) -> InlineKeyboardMarkup:
 
 def automation_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔓 Auto-Unlock-Face", callback_data="face_unlock")],
-        [InlineKeyboardButton(text="🔙 Назад",             callback_data="back")],
+        [InlineKeyboardButton(text="🔓 Auto-Unlock-Face",  callback_data="face_unlock")],
+        [InlineKeyboardButton(text="🦆 Auto-Enable-Pet",   callback_data="auto_enable_pet")],
+        [InlineKeyboardButton(text="🔙 Назад",              callback_data="back")],
+    ])
+
+
+def auto_enable_pet_kb(enabled: bool) -> InlineKeyboardMarkup:
+    toggle_label = "✅ Включено" if enabled else "❌ Выключено"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=toggle_label, callback_data="aep_toggle")],
+        [InlineKeyboardButton(text="🔙 Назад",    callback_data="automation")],
     ])
 
 
@@ -54,12 +63,7 @@ def fu_no_key_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def fu_kb(
-    job_status: str | None,
-    result_files: list,
-    auto_enabled: bool = False,
-    interval: float = 3.0,
-) -> InlineKeyboardMarkup:
+def fu_kb(job_status: str | None, result_files: list, auto_enabled: bool = False) -> InlineKeyboardMarkup:
     rows = []
     if job_status in ("pending", "processing"):
         rows.append([
@@ -88,11 +92,6 @@ def fu_kb(
         )])
     auto_label = "🔁 Авто-цикл: ✅" if auto_enabled else "🔁 Авто-цикл: ❌"
     rows.append([InlineKeyboardButton(text=auto_label, callback_data="fu_auto_toggle")])
-    if auto_enabled:
-        hours_str = f"{int(interval)}ч" if interval == int(interval) else f"{interval}ч"
-        rows.append([InlineKeyboardButton(
-            text=f"⏱ Интервал: {hours_str}", callback_data="fu_interval_cycle"
-        )])
     rows.append([
         InlineKeyboardButton(text="🔑 Ключ ZP", callback_data="fu_set_key"),
         InlineKeyboardButton(text="🔙 Назад",    callback_data="automation"),
@@ -117,6 +116,8 @@ def cancel_to_fu_kb() -> InlineKeyboardMarkup:
     ])
 
 
+# ─── Вспомогательные ─────────────────────────────────────────────────────────
+
 def cancel_kb(back_cb: str = "back") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отмена", callback_data=back_cb)]
@@ -126,4 +127,3 @@ def back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back")]
     ])
-

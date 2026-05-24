@@ -1,11 +1,7 @@
 import re
-import json
-import asyncio
 import logging
 import aiohttp
 from config import ACCOUNTSOPS_URL
-
-_RETRY_EXC = (aiohttp.ClientConnectorError, aiohttp.ServerDisconnectedError, asyncio.TimeoutError)
 
 
 def pet_kind_to_name(pet_kind: str) -> str:
@@ -16,64 +12,50 @@ def pet_kind_to_name(pet_kind: str) -> str:
 async def _post(api_key: str, endpoint: str, body: dict) -> tuple[bool, any, str]:
     headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
     url = f"{ACCOUNTSOPS_URL}{endpoint}"
-    last_err = "Не удалось подключиться к AccountsOps."
-    for attempt in range(3):
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, headers=headers, json=body,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as resp:
-                    raw = await resp.text()
-                    if resp.status == 401:
-                        return False, None, "Неверный API ключ."
-                    if resp.status == 403:
-                        return False, None, "Доступ запрещён."
-                    if resp.status != 200:
-                        return False, None, f"Ошибка сервера (код {resp.status})."
-                    return True, json.loads(raw), ""
-        except asyncio.TimeoutError:
-            last_err = "Превышен таймаут AccountsOps."
-            if attempt < 2:
-                await asyncio.sleep(2 ** attempt)
-        except _RETRY_EXC:
-            if attempt < 2:
-                await asyncio.sleep(2 ** attempt)
-        except Exception as e:
-            return False, None, f"Ошибка: {e}"
-    return False, None, last_err
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url, headers=headers, json=body,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                raw = await resp.text()
+                if resp.status == 401:
+                    return False, None, "Неверный API ключ."
+                if resp.status == 403:
+                    return False, None, "Доступ запрещён."
+                if resp.status != 200:
+                    return False, None, f"Ошибка сервера (код {resp.status})."
+                import json as _json
+                return True, _json.loads(raw), ""
+    except aiohttp.ClientConnectorError:
+        return False, None, "Не удалось подключиться к AccountsOps."
+    except Exception as e:
+        return False, None, f"Ошибка: {e}"
 
 
 async def _get(api_key: str, endpoint: str) -> tuple[bool, any, str]:
     headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
     url = f"{ACCOUNTSOPS_URL}{endpoint}"
-    last_err = "Не удалось подключиться к AccountsOps."
-    for attempt in range(3):
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
-                ) as resp:
-                    body = await resp.text()
-                    logging.debug("[AO] %s → %s", endpoint, resp.status)
-                    if resp.status == 401:
-                        return False, None, "Неверный API ключ."
-                    if resp.status == 403:
-                        return False, None, "Доступ запрещён."
-                    if resp.status != 200:
-                        return False, None, f"Ошибка сервера (код {resp.status})."
-                    return True, json.loads(body), ""
-        except asyncio.TimeoutError:
-            last_err = "Превышен таймаут AccountsOps."
-            if attempt < 2:
-                await asyncio.sleep(2 ** attempt)
-        except _RETRY_EXC:
-            if attempt < 2:
-                await asyncio.sleep(2 ** attempt)
-        except Exception as e:
-            logging.error("[AO] %s → %s", endpoint, e)
-            return False, None, f"Ошибка: {e}"
-    return False, None, last_err
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
+            ) as resp:
+                body = await resp.text()
+                logging.debug("[AO] %s → %s", endpoint, resp.status)
+                if resp.status == 401:
+                    return False, None, "Неверный API ключ."
+                if resp.status == 403:
+                    return False, None, "Доступ запрещён."
+                if resp.status != 200:
+                    return False, None, f"Ошибка сервера (код {resp.status})."
+                import json
+                return True, json.loads(body), ""
+    except aiohttp.ClientConnectorError:
+        return False, None, "Не удалось подключиться к AccountsOps."
+    except Exception as e:
+        logging.error("[AO] %s → %s", endpoint, e)
+        return False, None, f"Ошибка: {e}"
 
 
 async def get_dashboard(api_key: str) -> tuple[bool, dict, str]:
@@ -97,50 +79,51 @@ async def get_account_pets(api_key: str, account_id) -> tuple[bool, list, str]:
     return ok, data or [], err
 
 
+async def enable_accounts(api_key: str, usernames: list[str]) -> tuple[bool, any, str]:
+    return await _post(api_key, "/api/accounts/enable", {"usernames": usernames, "enabled": True})
+
+
+async def get_accounts_with_pet(api_key: str, pet_kind: str) -> tuple[bool, list[str], str]:
+    """Returns usernames of accounts that have the specified pet_kind."""
+    ok, accounts, err = await get_trackstats_accounts(api_key)
+    if not ok:
+        return False, [], err
+
+    usernames: list[str] = []
+    for acc in accounts:
+        acc_id   = acc.get("id")
+        username = acc.get("username") or acc.get("name")
+        if not acc_id or not username:
+            continue
+        ok2, pets, _ = await get_account_pets(api_key, acc_id)
+        if not ok2:
+            continue
+        for pet in pets:
+            if pet.get("pet_kind") == pet_kind:
+                usernames.append(username)
+                break
+
+    return True, usernames, ""
+
+
 async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
-    """Aggregate pets across all accounts using a shared session + semaphore."""
+    """Aggregate pets across all accounts.
+    Returns {pet_kind: {"quantity": N, "is_egg": bool, "name": str}}"""
     ok, accounts, err = await get_trackstats_accounts(api_key)
     if not ok:
         return False, {}, err
     if not accounts:
         return True, {}, ""
 
-    acc_ids = [acc["id"] for acc in accounts if acc.get("id")]
-    if not acc_ids:
-        return True, {}, ""
-
-    headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
-    sem = asyncio.Semaphore(5)
-
-    async def _do_get(session: aiohttp.ClientSession, url: str) -> list:
-        async with session.get(url, headers=headers,
-                               timeout=aiohttp.ClientTimeout(total=8)) as resp:
-            if resp.status != 200:
-                return []
-            return await resp.json()
-
-    async def fetch_one(session: aiohttp.ClientSession, aid) -> list:
-        async with sem:
-            url = f"{ACCOUNTSOPS_URL}/api/trackstats/accounts/{aid}/pets"
-            try:
-                return await asyncio.wait_for(_do_get(session, url), timeout=10.0)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                return []
-
-    connector = aiohttp.TCPConnector(limit=10, force_close=True)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        raw = await asyncio.gather(
-            *[fetch_one(session, aid) for aid in acc_ids],
-            return_exceptions=True,
-        )
-
     pets: dict = {}
-    for entry in raw:
-        if isinstance(entry, BaseException) or not isinstance(entry, list):
+    for acc in accounts:
+        acc_id = acc.get("id")
+        if not acc_id:
             continue
-        for pet in entry:
+        ok2, acc_pets, _ = await get_account_pets(api_key, acc_id)
+        if not ok2:
+            continue
+        for pet in acc_pets:
             kind = pet.get("pet_kind")
             if not kind:
                 continue

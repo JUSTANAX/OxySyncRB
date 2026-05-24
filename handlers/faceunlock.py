@@ -1,5 +1,4 @@
 from aiogram import Router, Bot
-from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -12,12 +11,9 @@ from database import (
     get_zp_key, save_zp_key,
     get_zp_job, save_zp_job, clear_zp_job,
     get_auto_unlock, set_auto_unlock,
-    get_auto_unlock_interval, set_auto_unlock_interval,
+    get_auto_enable_pet, set_auto_enable_pet,
 )
-from keyboards import automation_kb, fu_no_key_kb, fu_kb, fu_confirm_kb, cancel_to_fu_kb
-from state_cache import clear_stats_msg
-
-_INTERVAL_PRESETS = [1.0, 2.0, 3.0, 4.0, 6.0]
+from keyboards import automation_kb, fu_no_key_kb, fu_kb, fu_confirm_kb, cancel_to_fu_kb, auto_enable_pet_kb
 
 router = Router()
 
@@ -102,8 +98,7 @@ async def _build_fu_page(user_id: int) -> tuple[str, any]:
         lines.append("\n📭 Нет активных задач")
 
     auto_enabled = get_auto_unlock(user_id)
-    interval = get_auto_unlock_interval(user_id)
-    return "\n".join(lines), fu_kb(job_status, result_files, auto_enabled, interval)
+    return "\n".join(lines), fu_kb(job_status, result_files, auto_enabled)
 
 
 async def _show_fu(target, user_id: int, edit: bool = False):
@@ -122,7 +117,6 @@ async def _show_fu(target, user_id: int, edit: bool = False):
 
 @router.callback_query(lambda c: c.data == "automation")
 async def open_automation(callback: CallbackQuery, state: FSMContext):
-    clear_stats_msg(callback.from_user.id)
     await state.clear()
     await callback.message.edit_text(
         "🤖 <b>Автоматизация</b>\n\nВыбери инструмент:",
@@ -292,15 +286,12 @@ async def fu_confirm(callback: CallbackQuery, state: FSMContext):
         save_zp_job(callback.from_user.id, job_id)
 
     total    = result.get("total_accounts", 0)
+    db_free  = result.get("db_accounts_count", 0)
     paid     = result.get("paid_accounts_count", 0)
     est_cost = result.get("estimated_cost", 0.0)
 
-    await callback.answer(f"✅ Задача запущена! Платных: {paid} (~${est_cost:.2f})")
-    await callback.message.answer(
-        f"🔓 <b>Auto-Unlock-Face</b> — цикл запущен 🚀\n\n"
-        f"📋 Аккаунтов: <b>{total}</b>  |  💰 Платных: {paid} (~${est_cost:.2f})\n\n"
-        "Уведомлю когда задача завершится.",
-        parse_mode="HTML",
+    await callback.answer(
+        f"✅ Задача запущена! Платных: {paid} (~${est_cost:.2f})"
     )
     await _show_fu(callback.message, callback.from_user.id, edit=True)
 
@@ -364,67 +355,28 @@ async def fu_auto_toggle(callback: CallbackQuery):
     await _show_fu(callback.message, user_id, edit=True)
 
 
-# ─── /unlock — шорткат ───────────────────────────────────────────────────────
+# ─── Auto-Enable-Pet ──────────────────────────────────────────────────────────
 
-@router.message(Command("unlock"))
-async def cmd_unlock(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    ao_key  = get_panel(user_id)
-    zp_key  = get_zp_key(user_id)
-
-    if not ao_key:
-        await message.answer(
-            "❌ AccountsOps не подключён.\n"
-            "Настрой через /start → Настройки."
-        )
-        return
-    if not zp_key:
-        await message.answer(
-            "❌ ZeroPoint API ключ не подключён.\n"
-            "Настрой через /start → Автоматизация → Auto-Unlock-Face."
-        )
-        return
-
-    job_id = get_zp_job(user_id)
-    if job_id:
-        ok_s, st, _ = await get_status(zp_key, job_id)
-        if ok_s and st.get("status") in ("pending", "processing"):
-            await message.answer("⚠️ Уже есть активная задача разблокировки.")
-            return
-
-    msg = await message.answer("⏳ Ищу аккаунты с тегом <code>status:face</code>...", parse_mode="HTML")
-    ok, accounts, err = await get_face_accounts(ao_key)
-    if not ok:
-        await msg.edit_text(f"❌ Ошибка AccountsOps: {err}")
-        return
-    if not accounts:
-        await msg.edit_text("✅ Аккаунтов с тегом <code>status:face</code> не найдено.", parse_mode="HTML")
-        return
-
-    # Reuse the existing fu_confirm handler via FSM state
-    await state.set_state(FUStates.confirming_run)
-    await state.update_data(accounts_text="\n".join(accounts))
-    await msg.edit_text(
-        f"🔓 <b>/unlock</b>\n\n"
-        f"Найдено <b>{len(accounts)}</b> аккаунтов с тегом <code>status:face</code>.\n\n"
-        "Отправить на разблокировку через ZeroPoint?",
+@router.callback_query(lambda c: c.data == "auto_enable_pet")
+async def open_auto_enable_pet(callback: CallbackQuery):
+    enabled = get_auto_enable_pet(callback.from_user.id)
+    await callback.message.edit_text(
+        "🦆 <b>Auto-Enable-Pet</b>\n\n"
+        "Бот каждые 10 минут проверяет аккаунты. "
+        "Если у аккаунта есть пет "
+        "<code>soggy_spring_2026_strawberry_shortcake_ducky</code> — "
+        "автоматически включает его.",
         parse_mode="HTML",
-        reply_markup=fu_confirm_kb(len(accounts)),
+        reply_markup=auto_enable_pet_kb(enabled),
     )
+    await callback.answer()
 
 
-# ─── Face Unlock — интервал авто-цикла ───────────────────────────────────────
-
-@router.callback_query(lambda c: c.data == "fu_interval_cycle")
-async def fu_interval_cycle(callback: CallbackQuery):
+@router.callback_query(lambda c: c.data == "aep_toggle")
+async def aep_toggle(callback: CallbackQuery):
     user_id = callback.from_user.id
-    current = get_auto_unlock_interval(user_id)
-    try:
-        idx = _INTERVAL_PRESETS.index(current)
-        next_val = _INTERVAL_PRESETS[(idx + 1) % len(_INTERVAL_PRESETS)]
-    except ValueError:
-        next_val = _INTERVAL_PRESETS[0]
-    set_auto_unlock_interval(user_id, next_val)
-    hours_str = f"{int(next_val)}ч"
-    await callback.answer(f"⏱ Интервал: {hours_str}")
-    await _show_fu(callback.message, user_id, edit=True)
+    new_val = not get_auto_enable_pet(user_id)
+    set_auto_enable_pet(user_id, new_val)
+    status = "включён ✅" if new_val else "выключен ❌"
+    await callback.answer(f"🦆 Auto-Enable-Pet {status}")
+    await callback.message.edit_reply_markup(reply_markup=auto_enable_pet_kb(new_val))
