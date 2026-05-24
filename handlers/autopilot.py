@@ -10,6 +10,7 @@ from database import (
     get_panel,
     get_autopilot_config,
     save_autopilot_main, save_autopilot_pet, save_autopilot_config_id,
+    save_autopilot_batch_size,
     set_autopilot_running, set_autopilot_started_at,
     get_autopilot_active_count, get_autopilot_done_count,
     get_autopilot_active_entries, get_autopilot_pending_entries,
@@ -25,6 +26,7 @@ router = Router()
 class APStates(StatesGroup):
     waiting_main_account = State()
     waiting_pet_id       = State()
+    waiting_batch_size   = State()
 
 
 def _build_autopilot_page(user_id: int) -> tuple[str, any]:
@@ -33,6 +35,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     main_account = cfg["main_account"] if cfg else None
     pet_id       = cfg["pet_id"]       if cfg else None
     config_id    = cfg["config_id"]    if cfg else None
+    batch_size   = cfg["batch_size"]   if cfg else 10
     auto_enabled = get_auto_enable_pet(user_id)
 
     lines = ["🤖 <b>Авто-пилот</b>", ""]
@@ -42,6 +45,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     lines.append(f"👤 Аккаунт: {main_str}")
     lines.append(f"🦆 Пет: {pet_str}")
     lines.append(f"⚙️ Конфиг: {config_str}")
+    lines.append(f"👥 Одновременно: <b>{batch_size}</b>")
     lines.append("")
 
     if running:
@@ -50,14 +54,14 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
         done_count    = get_autopilot_done_count(user_id)
         lines.append(
             f"▶️ <b>Запущен</b>  ·  "
-            f"Активных: {active_count}/10  ·  "
+            f"Активных: {active_count}/{batch_size}  ·  "
             f"Ожидает: {pending_count}  ·  "
             f"Готово: {done_count}"
         )
     else:
         lines.append("⏹ <b>Остановлен</b>")
 
-    return "\n".join(lines), autopilot_kb(main_account, pet_id, config_id, running, auto_enabled)
+    return "\n".join(lines), autopilot_kb(main_account, pet_id, config_id, running, auto_enabled, batch_size)
 
 
 async def _show_autopilot(target, user_id: int, edit: bool = False):
@@ -163,6 +167,48 @@ async def ap_pick_config(callback: CallbackQuery):
     save_autopilot_config_id(callback.from_user.id, config_id)
     await callback.answer(f"✅ Конфиг {config_id} сохранён")
     await _show_autopilot(callback.message, callback.from_user.id, edit=True)
+
+
+# ─── Задать размер батча ─────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_set_batch")
+async def ap_set_batch(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(APStates.waiting_batch_size)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
+    await callback.message.edit_text(
+        "👥 Введи количество аккаунтов, которые будут работать одновременно:\n\n"
+        "<i>Например: <code>5</code> — бот будет держать 5 активных аккаунтов.\n"
+        "Допустимо от 1 до 50.</i>",
+        parse_mode="HTML",
+        reply_markup=cancel_to_ap_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(APStates.waiting_batch_size)
+async def ap_receive_batch(message: Message, state: FSMContext, bot: Bot):
+    if not message.text:
+        return
+    text = message.text.strip()
+    await message.delete()
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    if not text.isdigit() or not (1 <= int(text) <= 50):
+        await message.answer("❌ Введи число от 1 до 50:", reply_markup=cancel_to_ap_kb())
+        return
+    save_autopilot_batch_size(message.from_user.id, int(text))
+    await state.clear()
+    page_text, kb = _build_autopilot_page(message.from_user.id)
+    if prompt_msg_id:
+        try:
+            await bot.edit_message_text(
+                page_text, chat_id=message.chat.id, message_id=prompt_msg_id,
+                parse_mode="HTML", reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            pass
+    await message.answer(page_text, parse_mode="HTML", reply_markup=kb)
 
 
 # ─── Задать ID пета ───────────────────────────────────────────────────────────
@@ -317,7 +363,8 @@ async def ap_start(callback: CallbackQuery):
         all_usernames = [u for _, u in queue_accounts]
         await set_accounts_config(ao_key, all_usernames, config_id)
 
-    first_batch = get_autopilot_pending_entries(user_id)[:10]
+    batch_size  = cfg.get("batch_size") or 10
+    first_batch = get_autopilot_pending_entries(user_id)[:batch_size]
     if first_batch:
         await set_accounts_enabled(ao_key, [u for _, _, u in first_batch], True)
         for entry_id, _, _ in first_batch:

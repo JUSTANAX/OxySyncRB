@@ -60,6 +60,7 @@ def autopilot_kb(
     config_id: int | None,
     running: bool,
     auto_enabled: bool,
+    batch_size: int = 10,
 ) -> InlineKeyboardMarkup:
     rows = []
 
@@ -70,11 +71,13 @@ def autopilot_kb(
     else:
         pet_label = "🦆 Задать пет"
 
-    cfg_label = f"⚙️ Конфиг: {config_id}" if config_id else "⚙️ Задать конфиг"
+    cfg_label   = f"⚙️ Конфиг: {config_id}" if config_id else "⚙️ Задать конфиг"
+    batch_label = f"👥 Одновременно: {batch_size}"
 
-    rows.append([InlineKeyboardButton(text=main_label, callback_data="ap_set_main")])
-    rows.append([InlineKeyboardButton(text=pet_label,  callback_data="ap_set_pet")])
-    rows.append([InlineKeyboardButton(text=cfg_label,  callback_data="ap_set_config")])
+    rows.append([InlineKeyboardButton(text=main_label,  callback_data="ap_set_main")])
+    rows.append([InlineKeyboardButton(text=pet_label,   callback_data="ap_set_pet")])
+    rows.append([InlineKeyboardButton(text=cfg_label,   callback_data="ap_set_config")])
+    rows.append([InlineKeyboardButton(text=batch_label, callback_data="ap_set_batch")])
 
     if running:
         rows.append([

@@ -92,6 +92,7 @@ def init_db():
         "ALTER TABLE auto_unlock ADD COLUMN last_run_at TEXT",
         "ALTER TABLE autopilot_config ADD COLUMN config_id INTEGER",
         "ALTER TABLE autopilot_config ADD COLUMN started_at TEXT",
+        "ALTER TABLE autopilot_config ADD COLUMN batch_size INTEGER DEFAULT 10",
     ):
         try:
             conn.execute(stmt)
@@ -392,7 +393,8 @@ def set_auto_enable_pet(user_id: int, enabled: bool):
 def get_autopilot_config(user_id: int) -> dict | None:
     conn = _get_conn()
     row = conn.execute(
-        "SELECT main_account, pet_id, config_id, running, started_at FROM autopilot_config WHERE user_id = ?",
+        "SELECT main_account, pet_id, config_id, running, started_at, batch_size "
+        "FROM autopilot_config WHERE user_id = ?",
         (user_id,),
     ).fetchone()
     if not row:
@@ -400,6 +402,7 @@ def get_autopilot_config(user_id: int) -> dict | None:
     return {
         "main_account": row[0], "pet_id": row[1], "config_id": row[2],
         "running": bool(row[3]), "started_at": row[4],
+        "batch_size": row[5] if row[5] is not None else 10,
     }
 
 
@@ -427,6 +430,15 @@ def save_autopilot_pet(user_id: int, pet_id: str):
         "INSERT INTO autopilot_config (user_id, pet_id) VALUES (?, ?) "
         "ON CONFLICT(user_id) DO UPDATE SET pet_id = excluded.pet_id",
         (user_id, pet_id),
+    )
+
+
+def save_autopilot_batch_size(user_id: int, batch_size: int):
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO autopilot_config (user_id, batch_size) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET batch_size = excluded.batch_size",
+        (user_id, batch_size),
     )
 
 

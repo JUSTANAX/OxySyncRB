@@ -214,6 +214,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
 
     pet_id       = cfg["pet_id"]
     main_account = cfg["main_account"]
+    batch_size   = cfg.get("batch_size") or 10
     active       = get_autopilot_active_entries(user_id)
 
     done_ids:       list[int] = []
@@ -231,7 +232,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         for eid in done_ids:
             set_autopilot_entry_status(eid, "done")
 
-    slots = max(0, 10 - get_autopilot_active_count(user_id))
+    slots = max(0, batch_size - get_autopilot_active_count(user_id))
     if slots > 0:
         pending = get_autopilot_pending_entries(user_id)[:slots]
         if pending:
@@ -320,9 +321,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.4.6 запущен ✅")
+    print("OxySync Bot v1.4.7 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.4.6</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.4.7</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
