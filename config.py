@@ -10,7 +10,7 @@ if not BOT_TOKEN:
 
 OWNER_ID = 6101243914
 
-DB_PATH          = os.getenv("DB_PATH", os.path.join(_BASE_DIR, "oxysync.db"))
+DB_PATH          = os.getenv("DB_PATH", "/app/data/oxysync.db")
 ACCOUNTSOPS_KEY  = os.getenv("ACCOUNTSOPS_KEY", "")
 ZP_KEY           = os.getenv("ZP_KEY", "")
 ACCOUNTSOPS_URL  = "https://accountops.org"

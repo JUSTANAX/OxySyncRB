@@ -8,7 +8,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import TelegramObject
 
-from config import BOT_TOKEN, OWNER_ID, ACCOUNTSOPS_KEY, ZP_KEY
+import os
+from config import BOT_TOKEN, OWNER_ID, ACCOUNTSOPS_KEY, ZP_KEY, DB_PATH
 from database import (
     init_db,
     save_panel, save_zp_key,
@@ -324,6 +325,7 @@ async def autopilot_transfer_loop(bot: Bot):
 
 
 async def main():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     init_db()
     if ACCOUNTSOPS_KEY:
         save_panel(OWNER_ID, ACCOUNTSOPS_KEY)
