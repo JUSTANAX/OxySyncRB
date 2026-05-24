@@ -34,6 +34,7 @@ WATCHED_PETS = [
     "penguins_2025_dango_penguins",
     "admin_abuse_2025_sushi_penguin",
     "diamond_dragon",
+    "soggy_spring_2026_strawberry_shortcake_ducky",
 ]
 
 PERIODS = [
