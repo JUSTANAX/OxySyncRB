@@ -9,7 +9,7 @@ from database import (
     get_panel,
     get_autopilot_config,
     save_autopilot_main, save_autopilot_pet, save_autopilot_config_id,
-    set_autopilot_running,
+    set_autopilot_running, set_autopilot_started_at,
     get_autopilot_active_count, get_autopilot_done_count,
     get_autopilot_active_entries, get_autopilot_pending_entries,
     add_autopilot_queue, clear_autopilot_queue,
@@ -287,6 +287,7 @@ async def ap_start(callback: CallbackQuery):
 
     clear_autopilot_queue(user_id)
     add_autopilot_queue(user_id, queue_accounts)
+    set_autopilot_started_at(user_id)
     set_autopilot_running(user_id, True)
 
     if config_id:

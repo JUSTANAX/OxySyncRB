@@ -2,6 +2,7 @@ import asyncio
 import logging
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(message)s")
 
+from datetime import datetime
 from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
@@ -243,13 +244,31 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     if get_autopilot_active_count(user_id) == 0 and not get_autopilot_pending_entries(user_id):
         await set_accounts_enabled(ao_key, [main_account], False)
         set_autopilot_running(user_id, False)
-        done_count = get_autopilot_done_count(user_id)
+        done_count  = get_autopilot_done_count(user_id)
+        started_at  = cfg.get("started_at")
+        elapsed_str = ""
+        if started_at:
+            try:
+                delta   = datetime.utcnow() - datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S")
+                seconds = int(delta.total_seconds())
+                if seconds < 60:
+                    elapsed_str = f"{seconds}с"
+                elif seconds < 3600:
+                    m, s = divmod(seconds, 60)
+                    elapsed_str = f"{m} мин {s}с" if s else f"{m} мин"
+                else:
+                    h, rem = divmod(seconds, 3600)
+                    m = rem // 60
+                    elapsed_str = f"{h} ч {m} мин" if m else f"{h} ч"
+            except Exception:
+                pass
         try:
             await bot.send_message(
                 user_id,
                 f"🤖 <b>Авто-пилот</b> — завершён ✅\n\n"
                 f"Питомцев передано: <b>{done_count}</b>\n"
-                "Основной аккаунт отключён.",
+                f"Основной аккаунт отключён."
+                + (f"\n⏱ Время: <b>{elapsed_str}</b>" if elapsed_str else ""),
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -301,9 +320,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.4.4 запущен ✅")
+    print("OxySync Bot v1.4.5 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.4.4</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.4.5</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

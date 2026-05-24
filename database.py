@@ -91,6 +91,7 @@ def init_db():
         "ALTER TABLE auto_unlock ADD COLUMN interval_hours REAL DEFAULT 3.0",
         "ALTER TABLE auto_unlock ADD COLUMN last_run_at TEXT",
         "ALTER TABLE autopilot_config ADD COLUMN config_id INTEGER",
+        "ALTER TABLE autopilot_config ADD COLUMN started_at TEXT",
     ):
         try:
             conn.execute(stmt)
@@ -391,12 +392,15 @@ def set_auto_enable_pet(user_id: int, enabled: bool):
 def get_autopilot_config(user_id: int) -> dict | None:
     conn = _get_conn()
     row = conn.execute(
-        "SELECT main_account, pet_id, config_id, running FROM autopilot_config WHERE user_id = ?",
+        "SELECT main_account, pet_id, config_id, running, started_at FROM autopilot_config WHERE user_id = ?",
         (user_id,),
     ).fetchone()
     if not row:
         return None
-    return {"main_account": row[0], "pet_id": row[1], "config_id": row[2], "running": bool(row[3])}
+    return {
+        "main_account": row[0], "pet_id": row[1], "config_id": row[2],
+        "running": bool(row[3]), "started_at": row[4],
+    }
 
 
 def save_autopilot_main(user_id: int, main_account: str):
@@ -423,6 +427,15 @@ def save_autopilot_pet(user_id: int, pet_id: str):
         "INSERT INTO autopilot_config (user_id, pet_id) VALUES (?, ?) "
         "ON CONFLICT(user_id) DO UPDATE SET pet_id = excluded.pet_id",
         (user_id, pet_id),
+    )
+
+
+def set_autopilot_started_at(user_id: int):
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO autopilot_config (user_id, started_at) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET started_at = excluded.started_at",
+        (user_id, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
     )
 
 
