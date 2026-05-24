@@ -9,16 +9,17 @@ from api.accountsops import get_accounts_with_pet_details, set_accounts_enabled,
 from database import (
     get_panel,
     get_autopilot_config,
-    save_autopilot_main, save_autopilot_pet, save_autopilot_config_id,
+    save_autopilot_main, save_autopilot_config_id,
     save_autopilot_batch_size, save_autopilot_check_interval, save_autopilot_stuck_timeout,
     set_autopilot_running, set_autopilot_started_at,
     get_autopilot_active_count, get_autopilot_done_count,
     get_autopilot_active_entries, get_autopilot_pending_entries,
     add_autopilot_queue, clear_autopilot_queue,
     set_autopilot_entry_status,
+    get_autopilot_pets, add_autopilot_pet, remove_autopilot_pet,
     get_auto_enable_pet, set_auto_enable_pet,
 )
-from keyboards import autopilot_kb, cancel_to_ap_kb, auto_enable_pet_kb, configs_kb
+from keyboards import autopilot_kb, ap_pets_kb, cancel_to_ap_kb, auto_enable_pet_kb, configs_kb
 
 router = Router()
 
@@ -35,19 +36,23 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     cfg          = get_autopilot_config(user_id)
     running      = cfg["running"]      if cfg else False
     main_account = cfg["main_account"] if cfg else None
-    pet_id       = cfg["pet_id"]       if cfg else None
     config_id    = cfg["config_id"]    if cfg else None
     batch_size     = cfg["batch_size"]     if cfg else 10
     check_interval = cfg["check_interval"] if cfg else 30
     stuck_timeout  = cfg["stuck_timeout"]  if cfg else 10
     auto_enabled   = get_auto_enable_pet(user_id)
+    pets           = get_autopilot_pets(user_id)
+    pet_count      = len(pets)
 
     lines = ["🤖 <b>Авто-пилот</b>", ""]
     main_str   = f"<code>{main_account}</code>" if main_account else "<i>не задан</i>"
-    pet_str    = f"<code>{pet_id}</code>"        if pet_id       else "<i>не задан</i>"
     config_str = f"<code>{config_id}</code>"     if config_id    else "<i>не задан</i>"
     lines.append(f"👤 Аккаунт: {main_str}")
-    lines.append(f"🦆 Пет: {pet_str}")
+    if pets:
+        for _, pid in pets:
+            lines.append(f"🦆 <code>{pid}</code>")
+    else:
+        lines.append("🦆 Петы: <i>не заданы</i>")
     lines.append(f"⚙️ Конфиг: {config_str}")
     lines.append(f"👥 Одновременно: <b>{batch_size}</b>  ·  ⏱ Проверка: <b>{check_interval}с</b>  ·  ⏰ Стак: <b>{stuck_timeout}м</b>")
     lines.append("")
@@ -65,7 +70,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     else:
         lines.append("⏹ <b>Остановлен</b>")
 
-    return "\n".join(lines), autopilot_kb(main_account, pet_id, config_id, running, auto_enabled, batch_size, check_interval, stuck_timeout)
+    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, running, auto_enabled, batch_size, check_interval, stuck_timeout)
 
 
 async def _show_autopilot(target, user_id: int, edit: bool = False):
@@ -300,10 +305,29 @@ async def ap_receive_stuck(message: Message, state: FSMContext, bot: Bot):
     await message.answer(page_text, parse_mode="HTML", reply_markup=kb)
 
 
-# ─── Задать ID пета ───────────────────────────────────────────────────────────
+# ─── Управление петами ───────────────────────────────────────────────────────
+
+def _pets_page_text(user_id: int) -> tuple[str, any]:
+    pets = get_autopilot_pets(user_id)
+    lines = ["🦆 <b>Петы авто-пилота</b>", ""]
+    if pets:
+        for _, pid in pets:
+            lines.append(f"• <code>{pid}</code>")
+    else:
+        lines.append("<i>Нет добавленных петов</i>")
+    return "\n".join(lines), ap_pets_kb(pets)
+
 
 @router.callback_query(lambda c: c.data == "ap_set_pet")
 async def ap_set_pet(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer()
+    text, kb = _pets_page_text(callback.from_user.id)
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(lambda c: c.data == "ap_add_pet")
+async def ap_add_pet(callback: CallbackQuery, state: FSMContext):
     await state.set_state(APStates.waiting_pet_id)
     await state.update_data(prompt_msg_id=callback.message.message_id)
     await callback.message.edit_text(
@@ -326,9 +350,11 @@ async def ap_receive_pet(message: Message, state: FSMContext, bot: Bot):
     if not pet_id:
         await message.answer("❌ Введи корректный ID пета:", reply_markup=cancel_to_ap_kb())
         return
-    save_autopilot_pet(message.from_user.id, pet_id)
+    added = add_autopilot_pet(message.from_user.id, pet_id)
     await state.clear()
-    text, kb = _build_autopilot_page(message.from_user.id)
+    notice = "✅ Пет добавлен" if added else "ℹ️ Такой пет уже есть"
+    await message.answer(notice)
+    text, kb = _pets_page_text(message.from_user.id)
     if prompt_msg_id:
         try:
             await bot.edit_message_text(
@@ -339,6 +365,22 @@ async def ap_receive_pet(message: Message, state: FSMContext, bot: Bot):
         except TelegramBadRequest:
             pass
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(lambda c: c.data.startswith("ap_del_pet:"))
+async def ap_del_pet(callback: CallbackQuery):
+    try:
+        row_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    remove_autopilot_pet(row_id)
+    await callback.answer("🗑 Удалено")
+    text, kb = _pets_page_text(callback.from_user.id)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
 
 
 # ─── Запуск ───────────────────────────────────────────────────────────────────
@@ -352,8 +394,9 @@ async def ap_start(callback: CallbackQuery):
         return
 
     cfg = get_autopilot_config(user_id)
-    if not cfg or not cfg["main_account"] or not cfg["pet_id"]:
-        await callback.answer("❌ Задай основной аккаунт и ID пета.", show_alert=True)
+    pets = get_autopilot_pets(user_id)
+    if not cfg or not cfg["main_account"] or not pets:
+        await callback.answer("❌ Задай основной аккаунт и хотя бы один пет.", show_alert=True)
         return
 
     await callback.answer("⏳ Запускаю...")
@@ -378,30 +421,51 @@ async def ap_start(callback: CallbackQuery):
         parse_mode="HTML",
     )
 
-    config_id = cfg.get("config_id")
-    auto_en   = get_auto_enable_pet(user_id)
+    config_id  = cfg.get("config_id")
+    auto_en    = get_auto_enable_pet(user_id)
+    pet_count  = len(pets)
+    pet_ids    = [pid for _, pid in pets]
 
     ok_main, _, err_main = await set_accounts_enabled(ao_key, [cfg["main_account"]], True)
     if not ok_main:
         await callback.message.edit_text(
             f"🤖 <b>Авто-пилот</b>\n\n❌ Ошибка включения основного аккаунта: {err_main}",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], cfg["pet_id"], config_id, False, auto_en),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, False, auto_en),
         )
         return
 
     await callback.message.edit_text(
-        "🤖 <b>Авто-пилот</b>\n\n⏳ Сканирую аккаунты с петом...",
+        "🤖 <b>Авто-пилот</b>\n\n⏳ Сканирую аккаунты с петами...",
         parse_mode="HTML",
     )
 
-    ok, accounts, err = await get_accounts_with_pet_details(ao_key, cfg["pet_id"])
-    if not ok:
+    # Scan all pets in parallel, deduplicate by account_id
+    scan_results = await asyncio.gather(
+        *[get_accounts_with_pet_details(ao_key, pid) for pid in pet_ids],
+        return_exceptions=True,
+    )
+    seen_ids: set = set()
+    accounts: list[tuple] = []
+    scan_errors = []
+    for res in scan_results:
+        if isinstance(res, BaseException):
+            continue
+        ok, accs, err = res
+        if not ok:
+            scan_errors.append(err)
+            continue
+        for acc_id, username in accs:
+            if acc_id not in seen_ids:
+                seen_ids.add(acc_id)
+                accounts.append((acc_id, username))
+
+    if not accounts and scan_errors:
         await set_accounts_enabled(ao_key, [cfg["main_account"]], False)
         await callback.message.edit_text(
-            f"🤖 <b>Авто-пилот</b>\n\n❌ Ошибка сканирования: {err}",
+            f"🤖 <b>Авто-пилот</b>\n\n❌ Ошибка сканирования: {scan_errors[0]}",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], cfg["pet_id"], config_id, False, auto_en),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, False, auto_en),
         )
         return
 
@@ -433,13 +497,13 @@ async def ap_start(callback: CallbackQuery):
             skip_lines.append(f"⚠️ С петом, но статус face: <b>{len(skipped_face)}</b>")
         if skipped_dead:
             skip_lines.append(f"💀 С петом, но мёртвые: <b>{len(skipped_dead)}</b>")
-        msg = "🤖 <b>Авто-пилот</b>\n\nℹ️ Рабочих аккаунтов с этим петом не найдено.\nОсновной аккаунт отключён."
+        msg = "🤖 <b>Авто-пилот</b>\n\nℹ️ Рабочих аккаунтов с петами не найдено.\nОсновной аккаунт отключён."
         if skip_lines:
             msg += "\n\n" + "\n".join(skip_lines)
         await callback.message.edit_text(
             msg,
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], cfg["pet_id"], config_id, False, auto_en),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, False, auto_en),
         )
         return
 

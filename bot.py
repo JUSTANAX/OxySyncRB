@@ -22,6 +22,7 @@ from database import (
     get_autopilot_active_count, get_autopilot_done_count,
     get_autopilot_stuck_entries,
     set_autopilot_entry_status,
+    get_autopilot_pets,
 )
 from handlers import start
 from handlers import faceunlock
@@ -209,11 +210,12 @@ async def stats_refresh_loop(bot: Bot):
 
 async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     cfg = get_autopilot_config(user_id)
-    if not cfg or not cfg["main_account"] or not cfg["pet_id"]:
+    pet_rows = get_autopilot_pets(user_id)
+    if not cfg or not cfg["main_account"] or not pet_rows:
         set_autopilot_running(user_id, False)
         return
 
-    pet_id       = cfg["pet_id"]
+    pet_ids_set  = {pid for _, pid in pet_rows}
     main_account = cfg["main_account"]
     batch_size   = cfg.get("batch_size") or 10
     active       = get_autopilot_active_entries(user_id)
@@ -223,7 +225,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     for entry_id, acc_id, username in active:
         ok, pets, _ = await get_account_pets(ao_key, acc_id)
         if ok:
-            has_pet = any(p.get("pet_kind") == pet_id for p in pets)
+            has_pet = any(p.get("pet_kind") in pet_ids_set for p in pets)
             if not has_pet:
                 done_ids.append(entry_id)
                 done_usernames.append(username)
@@ -349,9 +351,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.4.9 запущен ✅")
+    print("OxySync Bot v1.5.0 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.4.9</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.5.0</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

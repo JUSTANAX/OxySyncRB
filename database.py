@@ -76,6 +76,13 @@ def init_db():
             running       INTEGER DEFAULT 0
         );
 
+        CREATE TABLE IF NOT EXISTS autopilot_pets (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            pet_id  TEXT NOT NULL,
+            UNIQUE (user_id, pet_id)
+        );
+
         CREATE TABLE IF NOT EXISTS autopilot_queue (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id      INTEGER NOT NULL,
@@ -475,6 +482,33 @@ def set_autopilot_started_at(user_id: int):
         "ON CONFLICT(user_id) DO UPDATE SET started_at = excluded.started_at",
         (user_id, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
     )
+
+
+def get_autopilot_pets(user_id: int) -> list[tuple[int, str]]:
+    """Returns [(row_id, pet_id), ...] ordered by insertion."""
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT id, pet_id FROM autopilot_pets WHERE user_id = ? ORDER BY id",
+        (user_id,),
+    ).fetchall()
+
+
+def add_autopilot_pet(user_id: int, pet_id: str) -> bool:
+    """Returns False if already exists."""
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO autopilot_pets (user_id, pet_id) VALUES (?, ?)",
+            (user_id, pet_id),
+        )
+        return True
+    except Exception:
+        return False
+
+
+def remove_autopilot_pet(row_id: int):
+    conn = _get_conn()
+    conn.execute("DELETE FROM autopilot_pets WHERE id = ?", (row_id,))
 
 
 def set_autopilot_running(user_id: int, running: bool):

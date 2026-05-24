@@ -54,9 +54,22 @@ def auto_enable_pet_kb(enabled: bool) -> InlineKeyboardMarkup:
     ])
 
 
+def ap_pets_kb(pets: list[tuple]) -> InlineKeyboardMarkup:
+    rows = []
+    for row_id, pet_id in pets:
+        short = pet_id if len(pet_id) <= 30 else pet_id[:27] + "..."
+        rows.append([
+            InlineKeyboardButton(text=f"🦆 {short}", callback_data="noop"),
+            InlineKeyboardButton(text="❌", callback_data=f"ap_del_pet:{row_id}"),
+        ])
+    rows.append([InlineKeyboardButton(text="➕ Добавить пет", callback_data="ap_add_pet")])
+    rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="autopilot")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def autopilot_kb(
     main_account: str | None,
-    pet_id: str | None,
+    pet_count: int,
     config_id: int | None,
     running: bool,
     auto_enabled: bool,
@@ -67,11 +80,7 @@ def autopilot_kb(
     rows = []
 
     main_label = f"👤 {main_account}" if main_account else "👤 Задать основной аккаунт"
-    if pet_id:
-        short_pet = pet_id if len(pet_id) <= 28 else pet_id[:25] + "..."
-        pet_label = f"🦆 {short_pet}"
-    else:
-        pet_label = "🦆 Задать пет"
+    pet_label  = f"🦆 Петы: {pet_count}" if pet_count > 0 else "🦆 Добавить петы"
 
     cfg_label      = f"⚙️ Конфиг: {config_id}" if config_id else "⚙️ Задать конфиг"
     batch_label    = f"👥 Одновременно: {batch_size}"
