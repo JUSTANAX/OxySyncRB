@@ -275,7 +275,7 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(auto_enable_pet_loop(bot))
-    print("OxySync Bot запущен ✅")
+    print("OxySync Bot v1.3.0 запущен ✅")
     await dp.start_polling(bot)
 
 
