@@ -68,6 +68,7 @@ def autopilot_kb(
     running: bool,
     check_interval: int = 30,
     stuck_timeout: int = 10,
+    batch_size: int = 10,
 ) -> InlineKeyboardMarkup:
     rows = []
 
@@ -77,7 +78,8 @@ def autopilot_kb(
     trade_cfg_label = f"🔄 Трейд конфиг: {config_id}" if config_id else "🔄 Трейд конфиг: не задан"
     farm_cfg_label  = f"🌾 Фарм конфиг: {farm_config_id}" if farm_config_id else "🌾 Фарм конфиг: не задан"
     interval_label  = f"⏱ Проверка: {check_interval}с"
-    stuck_label     = f"⏰ Стак-таймаут: {stuck_timeout}м"
+    stuck_label     = f"⏰ Стак: {stuck_timeout}м"
+    batch_label     = f"📊 Трейдеров: {batch_size}"
 
     rows.append([InlineKeyboardButton(text=main_label,       callback_data="ap_set_main")])
     rows.append([InlineKeyboardButton(text=pet_label,        callback_data="ap_set_pet")])
@@ -86,6 +88,7 @@ def autopilot_kb(
     rows.append([
         InlineKeyboardButton(text=interval_label, callback_data="ap_set_interval"),
         InlineKeyboardButton(text=stuck_label,    callback_data="ap_set_stuck"),
+        InlineKeyboardButton(text=batch_label,    callback_data="ap_set_batch"),
     ])
 
     if running:

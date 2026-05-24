@@ -20,6 +20,7 @@ from database import (
     get_users_with_autopilot_running,
     get_autopilot_config, set_autopilot_running, set_autopilot_last_checked,
     get_autopilot_farming_entries, get_autopilot_trading_entries,
+    get_autopilot_trading_count,
     increment_autopilot_trades_done,
     get_autopilot_stuck_entries,
     set_autopilot_entry_status,
@@ -219,6 +220,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     pet_ids_set     = {pid for _, pid in pet_rows}
     trade_config_id = cfg.get("config_id")
     farm_config_id  = cfg.get("farm_config_id")
+    batch_size      = cfg.get("batch_size") or 10
 
     # Check trading accounts — did they trade the pet?
     for entry_id, acc_id, username in get_autopilot_trading_entries(user_id):
@@ -256,7 +258,10 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             logging.error("Stuck notify user=%s: %s", user_id, e)
 
     # Check farming accounts — did they get the pet?
+    current_trading = get_autopilot_trading_count(user_id)
     for entry_id, acc_id, username in get_autopilot_farming_entries(user_id):
+        if current_trading >= batch_size:
+            break
         ok, pets, _ = await get_account_pets(ao_key, acc_id)
         if not ok:
             continue
@@ -266,6 +271,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             await set_accounts_enabled(ao_key, [username], False)
             await set_accounts_enabled(ao_key, [username], True)
             set_autopilot_entry_status(entry_id, "trading")
+            current_trading += 1
 
 
 async def run_autopilot_transfer(bot: Bot):
@@ -323,9 +329,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.5.6 запущен ✅")
+    print("OxySync Bot v1.5.7 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.5.6</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.5.7</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

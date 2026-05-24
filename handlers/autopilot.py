@@ -10,7 +10,7 @@ from database import (
     get_panel,
     get_autopilot_config,
     save_autopilot_main, save_autopilot_config_id, save_autopilot_farm_config_id,
-    save_autopilot_check_interval, save_autopilot_stuck_timeout,
+    save_autopilot_check_interval, save_autopilot_stuck_timeout, save_autopilot_batch_size,
     set_autopilot_running, set_autopilot_started_at,
     get_autopilot_farming_entries, get_autopilot_trading_entries,
     get_autopilot_farming_count, get_autopilot_trading_count,
@@ -29,6 +29,7 @@ class APStates(StatesGroup):
     waiting_pet_id         = State()
     waiting_check_interval = State()
     waiting_stuck_timeout  = State()
+    waiting_batch_size     = State()
 
 
 def _build_autopilot_page(user_id: int) -> tuple[str, any]:
@@ -39,6 +40,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     farm_config_id = cfg["farm_config_id"] if cfg else None
     check_interval = cfg["check_interval"] if cfg else 30
     stuck_timeout  = cfg["stuck_timeout"]  if cfg else 10
+    batch_size     = cfg["batch_size"]     if cfg else 10
     pets           = get_autopilot_pets(user_id)
     pet_count      = len(pets)
 
@@ -54,7 +56,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
         lines.append("🦆 Петы: <i>не заданы</i>")
     lines.append(f"🔄 Трейд конфиг: {trade_cfg_str}")
     lines.append(f"🌾 Фарм конфиг: {farm_cfg_str}")
-    lines.append(f"⏱ Проверка: <b>{check_interval}с</b>  ·  ⏰ Стак: <b>{stuck_timeout}м</b>")
+    lines.append(f"⏱ Проверка: <b>{check_interval}с</b>  ·  ⏰ Стак: <b>{stuck_timeout}м</b>  ·  📊 Трейдеров: <b>{batch_size}</b>")
     lines.append("")
 
     if running:
@@ -70,7 +72,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     else:
         lines.append("⏹ <b>Остановлен</b>")
 
-    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, farm_config_id, running, check_interval, stuck_timeout)
+    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, farm_config_id, running, check_interval, stuck_timeout, batch_size)
 
 
 async def _show_autopilot(target, user_id: int, edit: bool = False):
@@ -300,6 +302,47 @@ async def ap_receive_stuck(message: Message, state: FSMContext, bot: Bot):
     await message.answer(page_text, parse_mode="HTML", reply_markup=kb)
 
 
+# ─── Задать лимит торгующих ──────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_set_batch")
+async def ap_set_batch(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(APStates.waiting_batch_size)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
+    await callback.message.edit_text(
+        "📊 Введи максимальное кол-во аккаунтов одновременно в трейде:\n\n"
+        "<i>Допустимо от 1 до 50. Рекомендуется: <code>10</code>.</i>",
+        parse_mode="HTML",
+        reply_markup=cancel_to_ap_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(APStates.waiting_batch_size)
+async def ap_receive_batch(message: Message, state: FSMContext, bot: Bot):
+    if not message.text:
+        return
+    text = message.text.strip()
+    await message.delete()
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    if not text.isdigit() or not (1 <= int(text) <= 50):
+        await message.answer("❌ Введи число от 1 до 50:", reply_markup=cancel_to_ap_kb())
+        return
+    save_autopilot_batch_size(message.from_user.id, int(text))
+    await state.clear()
+    page_text, kb = _build_autopilot_page(message.from_user.id)
+    if prompt_msg_id:
+        try:
+            await bot.edit_message_text(
+                page_text, chat_id=message.chat.id, message_id=prompt_msg_id,
+                parse_mode="HTML", reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            pass
+    await message.answer(page_text, parse_mode="HTML", reply_markup=kb)
+
+
 # ─── Управление петами ───────────────────────────────────────────────────────
 
 def _pets_page_text(user_id: int) -> tuple[str, any]:
@@ -409,7 +452,7 @@ async def ap_start(callback: CallbackQuery):
         await callback.message.edit_text(
             "🤖 <b>Авто-пилот</b>\n\n❌ Не удалось получить список аккаунтов.",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False, cfg.get("check_interval", 30), cfg.get("stuck_timeout", 10), cfg.get("batch_size", 10)),
         )
         return
 
@@ -436,7 +479,7 @@ async def ap_start(callback: CallbackQuery):
         await callback.message.edit_text(
             "🤖 <b>Авто-пилот</b>\n\nℹ️ Нет доступных аккаунтов для фарма.",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False, cfg.get("check_interval", 30), cfg.get("stuck_timeout", 10), cfg.get("batch_size", 10)),
         )
         return
 
@@ -461,7 +504,7 @@ async def ap_start(callback: CallbackQuery):
         await callback.message.edit_text(
             f"🤖 <b>Авто-пилот</b>\n\n❌ Ошибка включения основного аккаунта: {err_main}",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False, cfg.get("check_interval", 30), cfg.get("stuck_timeout", 10), cfg.get("batch_size", 10)),
         )
         return
 
