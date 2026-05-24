@@ -1,4 +1,4 @@
-from aiogram import Router
+from aiogram import Router, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -91,6 +91,7 @@ async def ap_refresh(callback: CallbackQuery):
 @router.callback_query(lambda c: c.data == "ap_set_main")
 async def ap_set_main(callback: CallbackQuery, state: FSMContext):
     await state.set_state(APStates.waiting_main_account)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
     await callback.message.edit_text(
         "👤 Введи <b>username</b> основного аккаунта:\n\n"
         "<i>Этот аккаунт включится первым и будет принимать питомцев.</i>",
@@ -101,15 +102,29 @@ async def ap_set_main(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(APStates.waiting_main_account)
-async def ap_receive_main(message: Message, state: FSMContext):
+async def ap_receive_main(message: Message, state: FSMContext, bot: Bot):
+    if not message.text:
+        return
     username = message.text.strip()
     await message.delete()
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
     if not username:
         await message.answer("❌ Введи корректный username:", reply_markup=cancel_to_ap_kb())
         return
     save_autopilot_main(message.from_user.id, username)
     await state.clear()
-    await _show_autopilot(message, message.from_user.id)
+    text, kb = _build_autopilot_page(message.from_user.id)
+    if prompt_msg_id:
+        try:
+            await bot.edit_message_text(
+                text, chat_id=message.chat.id, message_id=prompt_msg_id,
+                parse_mode="HTML", reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            pass
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 # ─── Задать конфиг ───────────────────────────────────────────────────────────
@@ -154,6 +169,7 @@ async def ap_pick_config(callback: CallbackQuery):
 @router.callback_query(lambda c: c.data == "ap_set_pet")
 async def ap_set_pet(callback: CallbackQuery, state: FSMContext):
     await state.set_state(APStates.waiting_pet_id)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
     await callback.message.edit_text(
         "🦆 Введи <b>ID пета</b>:\n\n"
         "<i>Например: <code>soggy_spring_2026_strawberry_shortcake_ducky</code></i>",
@@ -164,15 +180,29 @@ async def ap_set_pet(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(APStates.waiting_pet_id)
-async def ap_receive_pet(message: Message, state: FSMContext):
+async def ap_receive_pet(message: Message, state: FSMContext, bot: Bot):
+    if not message.text:
+        return
     pet_id = message.text.strip()
     await message.delete()
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
     if not pet_id:
         await message.answer("❌ Введи корректный ID пета:", reply_markup=cancel_to_ap_kb())
         return
     save_autopilot_pet(message.from_user.id, pet_id)
     await state.clear()
-    await _show_autopilot(message, message.from_user.id)
+    text, kb = _build_autopilot_page(message.from_user.id)
+    if prompt_msg_id:
+        try:
+            await bot.edit_message_text(
+                text, chat_id=message.chat.id, message_id=prompt_msg_id,
+                parse_mode="HTML", reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            pass
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 # ─── Запуск ───────────────────────────────────────────────────────────────────
@@ -259,8 +289,6 @@ async def ap_start(callback: CallbackQuery):
     add_autopilot_queue(user_id, queue_accounts)
     set_autopilot_running(user_id, True)
 
-    # Apply config to all queued accounts if set
-    config_id = cfg.get("config_id")
     if config_id:
         all_usernames = [u for _, u in queue_accounts]
         await set_accounts_config(ao_key, all_usernames, config_id)
