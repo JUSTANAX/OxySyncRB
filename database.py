@@ -475,14 +475,11 @@ def get_autopilot_pets(user_id: int) -> list[tuple[int, str]]:
 def add_autopilot_pet(user_id: int, pet_id: str) -> bool:
     """Returns False if already exists."""
     conn = _get_conn()
-    try:
-        conn.execute(
-            "INSERT INTO autopilot_pets (user_id, pet_id) VALUES (?, ?)",
-            (user_id, pet_id),
-        )
-        return True
-    except Exception:
-        return False
+    cursor = conn.execute(
+        "INSERT OR IGNORE INTO autopilot_pets (user_id, pet_id) VALUES (?, ?)",
+        (user_id, pet_id),
+    )
+    return cursor.rowcount > 0
 
 
 def remove_autopilot_pet(row_id: int):
