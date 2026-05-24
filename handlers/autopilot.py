@@ -400,25 +400,61 @@ async def ap_start(callback: CallbackQuery):
     farm_config_id = cfg.get("farm_config_id")
 
     await callback.message.edit_text(
-        "🤖 <b>Авто-пилот</b>\n\n⏳ Отключаю все аккаунты...",
+        "🤖 <b>Авто-пилот</b>\n\n⏳ Собираю список аккаунтов...",
         parse_mode="HTML",
     )
 
     ok_all, all_accounts, _ = await get_trackstats_accounts(ao_key)
-    if ok_all and all_accounts:
-        all_usernames = [
-            acc.get("username") or acc.get("name", "")
-            for acc in all_accounts
-            if acc.get("username") or acc.get("name")
-        ]
-        all_usernames = [u for u in all_usernames if u]
-        if all_usernames:
-            await set_accounts_enabled(ao_key, all_usernames, False)
+    if not ok_all or not all_accounts:
+        await callback.message.edit_text(
+            "🤖 <b>Авто-пилот</b>\n\n❌ Не удалось получить список аккаунтов.",
+            parse_mode="HTML",
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False),
+        )
+        return
+
+    face_set, dead_set = await asyncio.gather(
+        get_usernames_by_tag(ao_key, "status:face"),
+        get_usernames_by_tag(ao_key, "status:dead"),
+    )
+
+    main_lower    = cfg["main_account"].lower()
+    farm_accounts = []
+    all_usernames = []
+    for acc in all_accounts:
+        username = acc.get("username") or acc.get("name", "")
+        if not username:
+            continue
+        all_usernames.append(username)
+        u = username.lower()
+        if u == main_lower or u in face_set or u in dead_set:
+            continue
+        acc_id = str(acc.get("id") or acc.get("account_id", ""))
+        farm_accounts.append((acc_id, username))
+
+    if not farm_accounts:
+        await callback.message.edit_text(
+            "🤖 <b>Авто-пилот</b>\n\nℹ️ Нет доступных аккаунтов для фарма.",
+            parse_mode="HTML",
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False),
+        )
+        return
+
+    # Apply farm config BEFORE disable so AccountsOps accepts the change.
+    # Then disable→enable acts as restart to pick it up.
+    if farm_config_id:
+        await callback.message.edit_text(
+            "🤖 <b>Авто-пилот</b>\n\n⏳ Применяю фарм конфиг...",
+            parse_mode="HTML",
+        )
+        await set_accounts_enabled(ao_key, [u for _, u in farm_accounts], True)
+        await set_accounts_config(ao_key, [u for _, u in farm_accounts], farm_config_id)
 
     await callback.message.edit_text(
-        "🤖 <b>Авто-пилот</b>\n\n⏳ Включаю основной аккаунт...",
+        "🤖 <b>Авто-пилот</b>\n\n⏳ Перезапускаю аккаунты...",
         parse_mode="HTML",
     )
+    await set_accounts_enabled(ao_key, all_usernames, False)
 
     ok_main, _, err_main = await set_accounts_enabled(ao_key, [cfg["main_account"]], True)
     if not ok_main:
@@ -428,40 +464,6 @@ async def ap_start(callback: CallbackQuery):
             reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False),
         )
         return
-
-    await callback.message.edit_text(
-        "🤖 <b>Авто-пилот</b>\n\n⏳ Собираю список аккаунтов...",
-        parse_mode="HTML",
-    )
-
-    face_set, dead_set = await asyncio.gather(
-        get_usernames_by_tag(ao_key, "status:face"),
-        get_usernames_by_tag(ao_key, "status:dead"),
-    )
-
-    main_lower    = cfg["main_account"].lower()
-    farm_accounts = []
-    for acc in all_accounts or []:
-        username = acc.get("username") or acc.get("name", "")
-        if not username:
-            continue
-        u = username.lower()
-        if u == main_lower or u in face_set or u in dead_set:
-            continue
-        acc_id = str(acc.get("id") or acc.get("account_id", ""))
-        farm_accounts.append((acc_id, username))
-
-    if not farm_accounts:
-        await set_accounts_enabled(ao_key, [cfg["main_account"]], False)
-        await callback.message.edit_text(
-            "🤖 <b>Авто-пилот</b>\n\nℹ️ Нет доступных аккаунтов для фарма.\nОсновной аккаунт отключён.",
-            parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False),
-        )
-        return
-
-    if farm_config_id:
-        await set_accounts_config(ao_key, [u for _, u in farm_accounts], farm_config_id)
 
     await set_accounts_enabled(ao_key, [u for _, u in farm_accounts], True)
 
