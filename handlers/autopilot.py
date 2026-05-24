@@ -1,10 +1,11 @@
+import asyncio
 from aiogram import Router, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest
 
-from api.accountsops import get_accounts_with_pet_details, set_accounts_enabled, set_accounts_config, get_trackstats_accounts, get_configs
+from api.accountsops import get_accounts_with_pet_details, set_accounts_enabled, set_accounts_config, get_trackstats_accounts, get_configs, get_usernames_by_tag
 from database import (
     get_panel,
     get_autopilot_config,
@@ -269,17 +270,39 @@ async def ap_start(callback: CallbackQuery):
         )
         return
 
-    queue_accounts = [
-        (acc_id, username) for acc_id, username in accounts
-        if username.lower() != cfg["main_account"].lower()
-    ]
+    # Fetch face and dead account sets in parallel
+    face_set, dead_set = await asyncio.gather(
+        get_usernames_by_tag(ao_key, "status:face"),
+        get_usernames_by_tag(ao_key, "status:dead"),
+    )
+
+    main_lower = cfg["main_account"].lower()
+    queue_accounts  = []
+    skipped_face    = []
+    skipped_dead    = []
+    for acc_id, username in accounts:
+        u = username.lower()
+        if u == main_lower:
+            continue
+        if u in face_set:
+            skipped_face.append(username)
+        elif u in dead_set:
+            skipped_dead.append(username)
+        else:
+            queue_accounts.append((acc_id, username))
 
     if not queue_accounts:
         await set_accounts_enabled(ao_key, [cfg["main_account"]], False)
+        skip_lines = []
+        if skipped_face:
+            skip_lines.append(f"⚠️ С петом, но статус face: <b>{len(skipped_face)}</b>")
+        if skipped_dead:
+            skip_lines.append(f"💀 С петом, но мёртвые: <b>{len(skipped_dead)}</b>")
+        msg = "🤖 <b>Авто-пилот</b>\n\nℹ️ Рабочих аккаунтов с этим петом не найдено.\nОсновной аккаунт отключён."
+        if skip_lines:
+            msg += "\n\n" + "\n".join(skip_lines)
         await callback.message.edit_text(
-            "🤖 <b>Авто-пилот</b>\n\n"
-            "ℹ️ Аккаунтов с этим петом не найдено.\n"
-            "Основной аккаунт отключён.",
+            msg,
             parse_mode="HTML",
             reply_markup=autopilot_kb(cfg["main_account"], cfg["pet_id"], config_id, False, auto_en),
         )
@@ -299,6 +322,21 @@ async def ap_start(callback: CallbackQuery):
         await set_accounts_enabled(ao_key, [u for _, _, u in first_batch], True)
         for entry_id, _, _ in first_batch:
             set_autopilot_entry_status(entry_id, "active")
+
+    # Build skip notice if any accounts were filtered out
+    skip_parts = []
+    if skipped_face:
+        skip_parts.append(f"⚠️ Пропущено (face): <b>{len(skipped_face)}</b>")
+    if skipped_dead:
+        skip_parts.append(f"💀 Пропущено (мёртвые): <b>{len(skipped_dead)}</b>")
+
+    if skip_parts:
+        await callback.message.answer(
+            "🤖 <b>Авто-пилот</b> — найдены пропущенные аккаунты\n\n"
+            + "\n".join(skip_parts)
+            + f"\n✅ В очереди: <b>{len(queue_accounts)}</b>",
+            parse_mode="HTML",
+        )
 
     await _show_autopilot(callback.message, user_id, edit=True)
 

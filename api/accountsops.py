@@ -314,6 +314,20 @@ async def get_face_accounts(api_key: str) -> tuple[bool, list[str], str]:
     return True, formatted, ""
 
 
+async def get_usernames_by_tag(api_key: str, tag: str) -> set[str]:
+    """Returns set of usernames that have the given tag."""
+    ok, data, _ = await _post(api_key, "/api/devices/accounts", {"tag": tag})
+    if not ok or not isinstance(data, dict):
+        return set()
+    usernames: set[str] = set()
+    for device in data.get("devices", []):
+        for acc in device.get("accounts", []):
+            u = (acc.get("username") or "").strip()
+            if u:
+                usernames.add(u.lower())
+    return usernames
+
+
 async def set_accounts_enabled(api_key: str, usernames: list[str], enabled: bool) -> tuple[bool, any, str]:
     CHUNK = 50
     last_err = ""
