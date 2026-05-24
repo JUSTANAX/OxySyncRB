@@ -77,11 +77,12 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS autopilot_queue (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id     INTEGER NOT NULL,
-            account_id  TEXT NOT NULL,
-            username    TEXT NOT NULL,
-            status      TEXT DEFAULT 'pending'
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL,
+            account_id   TEXT NOT NULL,
+            username     TEXT NOT NULL,
+            status       TEXT DEFAULT 'pending',
+            activated_at TEXT
         );
     """)
     # Migrations for existing databases
@@ -93,6 +94,10 @@ def init_db():
         "ALTER TABLE autopilot_config ADD COLUMN config_id INTEGER",
         "ALTER TABLE autopilot_config ADD COLUMN started_at TEXT",
         "ALTER TABLE autopilot_config ADD COLUMN batch_size INTEGER DEFAULT 10",
+        "ALTER TABLE autopilot_config ADD COLUMN check_interval INTEGER DEFAULT 30",
+        "ALTER TABLE autopilot_config ADD COLUMN last_checked_at TEXT",
+        "ALTER TABLE autopilot_config ADD COLUMN stuck_timeout INTEGER DEFAULT 10",
+        "ALTER TABLE autopilot_queue ADD COLUMN activated_at TEXT",
     ):
         try:
             conn.execute(stmt)
@@ -393,7 +398,8 @@ def set_auto_enable_pet(user_id: int, enabled: bool):
 def get_autopilot_config(user_id: int) -> dict | None:
     conn = _get_conn()
     row = conn.execute(
-        "SELECT main_account, pet_id, config_id, running, started_at, batch_size "
+        "SELECT main_account, pet_id, config_id, running, started_at, batch_size, "
+        "check_interval, last_checked_at, stuck_timeout "
         "FROM autopilot_config WHERE user_id = ?",
         (user_id,),
     ).fetchone()
@@ -402,7 +408,10 @@ def get_autopilot_config(user_id: int) -> dict | None:
     return {
         "main_account": row[0], "pet_id": row[1], "config_id": row[2],
         "running": bool(row[3]), "started_at": row[4],
-        "batch_size": row[5] if row[5] is not None else 10,
+        "batch_size":      row[5] if row[5] is not None else 10,
+        "check_interval":  row[6] if row[6] is not None else 30,
+        "last_checked_at": row[7],
+        "stuck_timeout":   row[8] if row[8] is not None else 10,
     }
 
 
@@ -430,6 +439,23 @@ def save_autopilot_pet(user_id: int, pet_id: str):
         "INSERT INTO autopilot_config (user_id, pet_id) VALUES (?, ?) "
         "ON CONFLICT(user_id) DO UPDATE SET pet_id = excluded.pet_id",
         (user_id, pet_id),
+    )
+
+
+def save_autopilot_check_interval(user_id: int, seconds: int):
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO autopilot_config (user_id, check_interval) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET check_interval = excluded.check_interval",
+        (user_id, seconds),
+    )
+
+
+def set_autopilot_last_checked(user_id: int):
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE autopilot_config SET last_checked_at = ? WHERE user_id = ?",
+        (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), user_id),
     )
 
 
@@ -519,9 +545,35 @@ def get_autopilot_done_count(user_id: int) -> int:
     return row[0] if row else 0
 
 
-def set_autopilot_entry_status(entry_id: int, status: str):
+def save_autopilot_stuck_timeout(user_id: int, minutes: int):
     conn = _get_conn()
     conn.execute(
-        "UPDATE autopilot_queue SET status = ? WHERE id = ?",
-        (status, entry_id),
+        "INSERT INTO autopilot_config (user_id, stuck_timeout) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET stuck_timeout = excluded.stuck_timeout",
+        (user_id, minutes),
     )
+
+
+def get_autopilot_stuck_entries(user_id: int, timeout_seconds: int) -> list[tuple]:
+    conn = _get_conn()
+    cutoff = (datetime.utcnow() - timedelta(seconds=timeout_seconds)).strftime("%Y-%m-%d %H:%M:%S")
+    return conn.execute(
+        "SELECT id, account_id, username FROM autopilot_queue "
+        "WHERE user_id = ? AND status = 'active' "
+        "AND activated_at IS NOT NULL AND activated_at <= ?",
+        (user_id, cutoff),
+    ).fetchall()
+
+
+def set_autopilot_entry_status(entry_id: int, status: str):
+    conn = _get_conn()
+    if status == "active":
+        conn.execute(
+            "UPDATE autopilot_queue SET status = ?, activated_at = ? WHERE id = ?",
+            (status, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), entry_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE autopilot_queue SET status = ? WHERE id = ?",
+            (status, entry_id),
+        )

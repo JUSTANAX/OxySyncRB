@@ -17,9 +17,10 @@ from database import (
     get_all_users_with_zp_jobs,
     get_zp_job, save_zp_job, clear_zp_job,
     get_users_with_autopilot_running,
-    get_autopilot_config, set_autopilot_running,
+    get_autopilot_config, set_autopilot_running, set_autopilot_last_checked,
     get_autopilot_active_entries, get_autopilot_pending_entries,
     get_autopilot_active_count, get_autopilot_done_count,
+    get_autopilot_stuck_entries,
     set_autopilot_entry_status,
 )
 from handlers import start
@@ -232,6 +233,24 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         for eid in done_ids:
             set_autopilot_entry_status(eid, "done")
 
+    stuck_timeout = cfg.get("stuck_timeout") or 10
+    stuck = get_autopilot_stuck_entries(user_id, stuck_timeout * 60)
+    if stuck:
+        stuck_usernames = [username for _, _, username in stuck]
+        await set_accounts_enabled(ao_key, stuck_usernames, False)
+        for entry_id, _, _ in stuck:
+            set_autopilot_entry_status(entry_id, "stuck")
+        try:
+            lines = [f"⏰ <b>Авто-пилот</b> — зависшие аккаунты заменены\n"]
+            lines.append(f"Без передачи пета >{stuck_timeout} мин: <b>{len(stuck_usernames)}</b>")
+            for u in stuck_usernames[:10]:
+                lines.append(f"• <code>{u}</code>")
+            if len(stuck_usernames) > 10:
+                lines.append(f"... и ещё {len(stuck_usernames) - 10}")
+            await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML")
+        except Exception as e:
+            logging.error("Stuck notify user=%s: %s", user_id, e)
+
     slots = max(0, batch_size - get_autopilot_active_count(user_id))
     if slots > 0:
         pending = get_autopilot_pending_entries(user_id)[:slots]
@@ -277,8 +296,17 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
 
 
 async def run_autopilot_transfer(bot: Bot):
+    now = datetime.utcnow()
     for user_id, ao_key in get_users_with_autopilot_running():
         try:
+            cfg = get_autopilot_config(user_id)
+            interval = (cfg.get("check_interval") or 30) if cfg else 30
+            last = (cfg.get("last_checked_at") or "") if cfg else ""
+            if last:
+                elapsed = (now - datetime.strptime(last, "%Y-%m-%d %H:%M:%S")).total_seconds()
+                if elapsed < interval:
+                    continue
+            set_autopilot_last_checked(user_id)
             await _process_one_autopilot(bot, user_id, ao_key)
         except Exception as e:
             logging.error("Autopilot transfer user=%s: %s", user_id, e)
@@ -286,7 +314,7 @@ async def run_autopilot_transfer(bot: Bot):
 
 async def autopilot_transfer_loop(bot: Bot):
     while True:
-        await asyncio.sleep(30)
+        await asyncio.sleep(5)
         try:
             await run_autopilot_transfer(bot)
         except Exception as e:
@@ -321,9 +349,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.4.7 запущен ✅")
+    print("OxySync Bot v1.4.9 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.4.7</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.4.9</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

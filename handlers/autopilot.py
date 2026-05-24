@@ -10,7 +10,7 @@ from database import (
     get_panel,
     get_autopilot_config,
     save_autopilot_main, save_autopilot_pet, save_autopilot_config_id,
-    save_autopilot_batch_size,
+    save_autopilot_batch_size, save_autopilot_check_interval, save_autopilot_stuck_timeout,
     set_autopilot_running, set_autopilot_started_at,
     get_autopilot_active_count, get_autopilot_done_count,
     get_autopilot_active_entries, get_autopilot_pending_entries,
@@ -24,9 +24,11 @@ router = Router()
 
 
 class APStates(StatesGroup):
-    waiting_main_account = State()
-    waiting_pet_id       = State()
-    waiting_batch_size   = State()
+    waiting_main_account   = State()
+    waiting_pet_id         = State()
+    waiting_batch_size     = State()
+    waiting_check_interval = State()
+    waiting_stuck_timeout  = State()
 
 
 def _build_autopilot_page(user_id: int) -> tuple[str, any]:
@@ -35,8 +37,10 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     main_account = cfg["main_account"] if cfg else None
     pet_id       = cfg["pet_id"]       if cfg else None
     config_id    = cfg["config_id"]    if cfg else None
-    batch_size   = cfg["batch_size"]   if cfg else 10
-    auto_enabled = get_auto_enable_pet(user_id)
+    batch_size     = cfg["batch_size"]     if cfg else 10
+    check_interval = cfg["check_interval"] if cfg else 30
+    stuck_timeout  = cfg["stuck_timeout"]  if cfg else 10
+    auto_enabled   = get_auto_enable_pet(user_id)
 
     lines = ["🤖 <b>Авто-пилот</b>", ""]
     main_str   = f"<code>{main_account}</code>" if main_account else "<i>не задан</i>"
@@ -45,7 +49,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     lines.append(f"👤 Аккаунт: {main_str}")
     lines.append(f"🦆 Пет: {pet_str}")
     lines.append(f"⚙️ Конфиг: {config_str}")
-    lines.append(f"👥 Одновременно: <b>{batch_size}</b>")
+    lines.append(f"👥 Одновременно: <b>{batch_size}</b>  ·  ⏱ Проверка: <b>{check_interval}с</b>  ·  ⏰ Стак: <b>{stuck_timeout}м</b>")
     lines.append("")
 
     if running:
@@ -61,7 +65,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     else:
         lines.append("⏹ <b>Остановлен</b>")
 
-    return "\n".join(lines), autopilot_kb(main_account, pet_id, config_id, running, auto_enabled, batch_size)
+    return "\n".join(lines), autopilot_kb(main_account, pet_id, config_id, running, auto_enabled, batch_size, check_interval, stuck_timeout)
 
 
 async def _show_autopilot(target, user_id: int, edit: bool = False):
@@ -197,6 +201,91 @@ async def ap_receive_batch(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❌ Введи число от 1 до 50:", reply_markup=cancel_to_ap_kb())
         return
     save_autopilot_batch_size(message.from_user.id, int(text))
+    await state.clear()
+    page_text, kb = _build_autopilot_page(message.from_user.id)
+    if prompt_msg_id:
+        try:
+            await bot.edit_message_text(
+                page_text, chat_id=message.chat.id, message_id=prompt_msg_id,
+                parse_mode="HTML", reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            pass
+    await message.answer(page_text, parse_mode="HTML", reply_markup=kb)
+
+
+# ─── Задать интервал проверки ─────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_set_interval")
+async def ap_set_interval(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(APStates.waiting_check_interval)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
+    await callback.message.edit_text(
+        "⏱ Введи интервал проверки инвентарей (в секундах):\n\n"
+        "<i>Например: <code>30</code> — проверять каждые 30 секунд.\n"
+        "Допустимо от 10 до 300 секунд.</i>",
+        parse_mode="HTML",
+        reply_markup=cancel_to_ap_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(APStates.waiting_check_interval)
+async def ap_receive_interval(message: Message, state: FSMContext, bot: Bot):
+    if not message.text:
+        return
+    text = message.text.strip()
+    await message.delete()
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    if not text.isdigit() or not (10 <= int(text) <= 300):
+        await message.answer("❌ Введи число от 10 до 300 секунд:", reply_markup=cancel_to_ap_kb())
+        return
+    save_autopilot_check_interval(message.from_user.id, int(text))
+    await state.clear()
+    page_text, kb = _build_autopilot_page(message.from_user.id)
+    if prompt_msg_id:
+        try:
+            await bot.edit_message_text(
+                page_text, chat_id=message.chat.id, message_id=prompt_msg_id,
+                parse_mode="HTML", reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            pass
+    await message.answer(page_text, parse_mode="HTML", reply_markup=kb)
+
+
+# ─── Задать стак-таймаут ─────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_set_stuck")
+async def ap_set_stuck(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(APStates.waiting_stuck_timeout)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
+    await callback.message.edit_text(
+        "⏰ Введи стак-таймаут (в минутах):\n\n"
+        "<i>Если аккаунт активен дольше этого времени без передачи пета — "
+        "он будет заменён следующим из очереди.\n"
+        "Допустимо от 1 до 60 минут. Рекомендуется: <code>10</code>.</i>",
+        parse_mode="HTML",
+        reply_markup=cancel_to_ap_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(APStates.waiting_stuck_timeout)
+async def ap_receive_stuck(message: Message, state: FSMContext, bot: Bot):
+    if not message.text:
+        return
+    text = message.text.strip()
+    await message.delete()
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    if not text.isdigit() or not (1 <= int(text) <= 60):
+        await message.answer("❌ Введи число от 1 до 60 минут:", reply_markup=cancel_to_ap_kb())
+        return
+    save_autopilot_stuck_timeout(message.from_user.id, int(text))
     await state.clear()
     page_text, kb = _build_autopilot_page(message.from_user.id)
     if prompt_msg_id:
