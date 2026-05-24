@@ -282,7 +282,7 @@ async def set_accounts_config(api_key: str, usernames: list[str], config_id: int
 
 
 async def get_configs(api_key: str) -> tuple[bool, list[dict], str]:
-    ok, data, err = await _get(api_key, "/api/configs")
+    ok, data, err = await _get(api_key, "/api/player-configs")
     if not ok:
         return False, [], err
     if isinstance(data, list):
