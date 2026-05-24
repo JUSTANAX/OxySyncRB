@@ -323,9 +323,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.5.5 запущен ✅")
+    print("OxySync Bot v1.5.6 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.5.5</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.5.6</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

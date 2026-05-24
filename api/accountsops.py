@@ -346,7 +346,7 @@ async def set_accounts_config(api_key: str, usernames: list[str], config_id: int
     last_err = ""
     for i in range(0, max(len(usernames), 1), CHUNK):
         chunk = usernames[i:i + CHUNK]
-        ok, _, err = await _post(api_key, "/api/accounts/config", {"usernames": chunk, "config_id": config_id})
+        ok, _, err = await _put(api_key, "/api/accounts/config", {"usernames": chunk, "config_id": config_id})
         if not ok:
             last_err = err
     if last_err:
