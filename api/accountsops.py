@@ -13,6 +13,37 @@ def pet_kind_to_name(pet_kind: str) -> str:
     return name.replace('_', ' ').title()
 
 
+async def _patch(api_key: str, endpoint: str, body: dict) -> tuple[bool, any, str]:
+    headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
+    url = f"{ACCOUNTSOPS_URL}{endpoint}"
+    last_err = "Не удалось подключиться к AccountsOps."
+    for attempt in range(3):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.patch(
+                    url, headers=headers, json=body,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    raw = await resp.text()
+                    if resp.status == 401:
+                        return False, None, "Неверный API ключ."
+                    if resp.status == 403:
+                        return False, None, "Доступ запрещён."
+                    if resp.status != 200:
+                        return False, None, f"Ошибка сервера (код {resp.status})."
+                    return True, json.loads(raw), ""
+        except asyncio.TimeoutError:
+            last_err = "Превышен таймаут AccountsOps."
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+        except _RETRY_EXC:
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+        except Exception as e:
+            return False, None, f"Ошибка: {e}"
+    return False, None, last_err
+
+
 async def _post(api_key: str, endpoint: str, body: dict) -> tuple[bool, any, str]:
     headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
     url = f"{ACCOUNTSOPS_URL}{endpoint}"
@@ -156,7 +187,7 @@ async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
 
 
 async def enable_accounts(api_key: str, usernames: list[str]) -> tuple[bool, any, str]:
-    return await _post(api_key, "/api/accounts/enable", {"usernames": usernames, "enabled": True})
+    return await _patch(api_key, "/api/accounts/enable", {"usernames": usernames, "enabled": True})
 
 
 async def get_accounts_with_pet(api_key: str, pet_kind: str) -> tuple[bool, list[str], str]:
@@ -243,7 +274,7 @@ async def get_face_accounts(api_key: str) -> tuple[bool, list[str], str]:
 
 
 async def set_accounts_enabled(api_key: str, usernames: list[str], enabled: bool) -> tuple[bool, any, str]:
-    return await _post(api_key, "/api/accounts/enable", {"usernames": usernames, "enabled": enabled})
+    return await _patch(api_key, "/api/accounts/enable", {"usernames": usernames, "enabled": enabled})
 
 
 async def get_accounts_with_pet_details(api_key: str, pet_kind: str) -> tuple[bool, list, str]:
