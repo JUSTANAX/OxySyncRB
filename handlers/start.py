@@ -1,13 +1,14 @@
 import asyncio
 
 from aiogram import Router
-from aiogram.filters import CommandStart, StateFilter
+from aiogram.filters import CommandStart, StateFilter, Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 
-from api.accountsops import get_dashboard, get_all_pets, filter_pets
+import json
+from api.accountsops import get_dashboard, get_all_pets, filter_pets, get_trackstats_accounts
 from api.faceunlock import get_balance
 from database import (
     get_panel, save_panel,
@@ -364,5 +365,32 @@ async def receive_threshold(message: Message, state: FSMContext):
         f"✅ Порог установлен: <b>{row[0]}</b> аккаунтов",
         parse_mode="HTML",
         reply_markup=alerts_kb(row[0], bool(row[1])),
+    )
+
+
+# ─── /debug_pets ──────────────────────────────────────────────────────────────
+
+@router.message(Command("debug_pets"))
+async def cmd_debug_pets(message: Message):
+    api_key = get_panel(message.from_user.id)
+    if not api_key:
+        await message.answer("❌ API ключ не настроен.")
+        return
+    msg = await message.answer("⏳ Запрашиваю /api/trackstats/accounts...")
+    ok, accounts, err = await get_trackstats_accounts(api_key)
+    if not ok:
+        await msg.edit_text(f"❌ Ошибка: {err}")
+        return
+    if not accounts:
+        await msg.edit_text("⚠️ Список пуст — сервер вернул 0 аккаунтов.")
+        return
+    sample = accounts[0]
+    keys = list(sample.keys())
+    preview = json.dumps(sample, ensure_ascii=False, indent=2)[:800]
+    await msg.edit_text(
+        f"✅ Аккаунтов: <b>{len(accounts)}</b>\n"
+        f"Поля первого: <code>{keys}</code>\n\n"
+        f"<pre>{preview}</pre>",
+        parse_mode="HTML",
     )
 
