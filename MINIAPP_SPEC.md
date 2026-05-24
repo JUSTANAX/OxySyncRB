@@ -392,64 +392,375 @@ automation              — меню автоматизации
 
 ---
 
-## 7. Рекомендации для Mini App
+## 7. HTTP API Mini App-сервера
 
-### Экраны
+Рядом с ботом поднимается HTTP-сервер (FastAPI / aiohttp). Mini App обращается к нему напрямую.  
+Telegram Mini App передаёт `initData` → сервер проверяет подпись и извлекает `user_id`.  
+Все эндпоинты ниже — относительно базового URL сервера.
 
-1. **Dashboard**
-   - `GET /api/dashboard` → active / passive / unstable
-   - Баланс ZP (если ключ есть)
-   - Кнопка обновить
+---
 
-2. **Auto-Unlock-Face**
-   - Текущий статус задачи + прогресс
-   - Запустить / Отменить / Скачать файлы
-   - Авто-цикл вкл/выкл + интервал
+### GET /api/dashboard
 
-3. **Авто-пилот**
-   - Текущий конфиг (main_account, список петов, трейд-конфиг, фарм-конфиг, интервал, стак-таймаут)
-   - Статус: Фармит X / Торгует Y / Сделок Z
-   - Запустить / Остановить
-   - Редактирование всех параметров
+Главная статистика.
 
-4. **Уведомления**
-   - Порог + вкл/выкл
-
-### Способ взаимодействия Mini App ↔ Bot
-
-Рекомендуется поднять простой HTTP-сервер (FastAPI / aiohttp) рядом с ботом. Mini App отправляет команды на этот сервер, который вызывает функции из `database.py` и `api/`.
-
-Telegram Mini App передаёт `initData` с `user.id` для аутентификации.
-
-### Формат данных для API Mini App
-
-**GET /miniapp/state** → текущее состояние всего:
+**Ответ:**
 ```json
 {
-  "dashboard": {"active_count": 0, "passive_count": 0, "unstable_count": 0},
-  "zp_balance": {"effective": 0.0, "reserved": 0.0},
-  "face_unlock": {
-    "job_id": "...",
+  "active_count": 120,
+  "passive_count": 30,
+  "unstable_count": 5,
+  "zp_balance": {
+    "effective": 12.50,
+    "reserved": 1.00
+  }
+}
+```
+`zp_balance` — `null` если ZeroPoint ключ не задан.
+
+---
+
+### GET /api/faceunlock
+
+Состояние Auto-Unlock-Face.
+
+**Ответ:**
+```json
+{
+  "zp_key": true,
+  "auto_enabled": true,
+  "interval_hours": 3.0,
+  "next_run_at": "2026-05-24T15:30:00Z",
+  "job": {
+    "job_id": "abc123",
     "status": "processing",
-    "progress": {"total": 100, "processed": 50, "successful": 40, "failed": 10},
-    "auto_enabled": true,
-    "interval_hours": 3.0
-  },
-  "autopilot": {
-    "running": true,
+    "total_accounts": 100,
+    "processed": 60,
+    "successful": 50,
+    "failed": 8,
+    "other_failed": 2,
+    "result_files": ["unlocked.txt", "failed.txt"]
+  }
+}
+```
+
+- `zp_key` — bool, подключён ли ZP ключ
+- `auto_enabled` — bool, включён ли авто-цикл
+- `interval_hours` — float, один из пресетов: `1.0 / 2.0 / 3.0 / 4.0 / 6.0`
+- `next_run_at` — ISO 8601 UTC, расчётное время следующего авто-запуска (`last_run_at + interval_hours`); `null` если авто-цикл выключен или ещё не запускался
+- `job` — `null` если нет активной/завершённой задачи
+
+---
+
+### POST /api/faceunlock/start
+
+Запустить задачу разблокировки. Берёт аккаунты с тегом `status:face` и отправляет в ZeroPoint.
+
+**Тело запроса:** пустое `{}`
+
+**Ответ (успех):**
+```json
+{
+  "job_id": "abc123",
+  "accounts": 47
+}
+```
+- `accounts` — количество аккаунтов, отправленных в задачу
+
+**Ответ (ошибка):**
+```json
+{
+  "error": "Уже есть активная задача",
+  "job_id": "abc123"
+}
+```
+HTTP 409 если задача уже активна.
+
+---
+
+### POST /api/faceunlock/cancel
+
+Отменить активную задачу.
+
+**Тело:** `{}`
+
+**Ответ:**
+```json
+{ "ok": true }
+```
+
+---
+
+### PUT /api/faceunlock
+
+Сохранить настройки авто-цикла.
+
+**Тело запроса:**
+```json
+{
+  "auto_enabled": true,
+  "interval_hours": 3.0
+}
+```
+Оба поля опциональны — передавать только то, что меняется.  
+`interval_hours` — только из пресетов `[1.0, 2.0, 3.0, 4.0, 6.0]`.
+
+**Ответ:**
+```json
+{
+  "auto_enabled": true,
+  "interval_hours": 3.0,
+  "next_run_at": "2026-05-24T15:30:00Z"
+}
+```
+
+---
+
+### GET /api/faceunlock/download/{filename}
+
+Скачать файл результата задачи.
+
+**Параметры:** `filename` — имя файла из поля `result_files` в статусе задачи (напр. `unlocked.txt`)
+
+**Ответ:** бинарный файл  
+`Content-Type: application/octet-stream`  
+`Content-Disposition: attachment; filename="{filename}"`
+
+**Ошибки:**
+- HTTP 404 — файл не найден или задача не существует
+- HTTP 400 — нет активного job_id
+
+---
+
+### GET /api/autopilot
+
+Полное состояние авто-пилота.
+
+**Ответ:**
+```json
+{
+  "running": true,
+  "config": {
     "main_account": "username",
-    "pets": ["pet_id_1", "pet_id_2"],
     "config_id": 5,
     "farm_config_id": 3,
     "check_interval": 30,
     "stuck_timeout": 10,
-    "farming_count": 45,
-    "trading_count": 3,
-    "trades_done": 12
+    "started_at": "2026-05-24T10:00:00Z"
   },
-  "alerts": {
-    "threshold": 50,
-    "enabled": true
-  }
+  "pets": [
+    { "id": 1, "pet_id": "soggy_spring_2026_strawberry_shortcake_ducky" },
+    { "id": 2, "pet_id": "basic_egg_2022_alicorn" }
+  ],
+  "queue": {
+    "farming": 45,
+    "trading": 3,
+    "stuck": 1,
+    "total": 49
+  },
+  "trades_done": 12,
+  "recent": [
+    { "time": "2026-05-24T10:31:00Z", "type": "trade_complete", "username": "player123" },
+    { "time": "2026-05-24T10:29:00Z", "type": "got_pet",        "username": "player456" },
+    { "time": "2026-05-24T10:25:00Z", "type": "stuck",          "username": "player789" },
+    { "time": "2026-05-24T10:00:00Z", "type": "started",        "username": null }
+  ]
 }
+```
+
+**Поля `queue`:**
+- `farming` — аккаунты в статусе `farming` (фармят, пета нет)
+- `trading` — аккаунты в статусе `trading` (пет есть, ждут трейда)
+- `stuck` — аккаунты которые зависли (превышен `stuck_timeout`), в процессе возврата в `farming`
+- `total` — сумма всех трёх
+
+**Поле `recent`** — последние 20 событий, новые первыми.  
+Типы событий (`type`):
+
+| Тип | Описание |
+|---|---|
+| `started` | Авто-пилот запущен |
+| `stopped` | Авто-пилот остановлен |
+| `got_pet` | Аккаунт получил нужного пета → переведён в trading |
+| `trade_complete` | Аккаунт передал пета → возвращён в farming |
+| `stuck` | Аккаунт завис (не передал пета за `stuck_timeout` мин) → возвращён в farming |
+
+---
+
+### POST /api/autopilot/start
+
+Запустить авто-пилот.
+
+**Тело:** `{}`
+
+**Ответ (успех):**
+```json
+{ "queued": 148 }
+```
+- `queued` — количество аккаунтов добавленных в очередь (статус `farming`)
+
+**Ошибки:**
+- HTTP 400 `{"error": "Не задан main_account"}` — конфиг неполный
+- HTTP 400 `{"error": "Не заданы pet_ids"}` — нет петов для отслеживания
+- HTTP 409 `{"error": "Уже запущен"}` — пилот уже работает
+
+---
+
+### POST /api/autopilot/stop
+
+Остановить авто-пилот. Отключает все активные аккаунты.
+
+**Тело:** `{}`
+
+**Ответ:**
+```json
+{ "ok": true }
+```
+
+---
+
+### PUT /api/autopilot/config
+
+Сохранить настройки авто-пилота. Все поля опциональны.
+
+**Тело:**
+```json
+{
+  "main_account": "username",
+  "config_id": 5,
+  "farm_config_id": 3,
+  "check_interval": 30,
+  "stuck_timeout": 10
+}
+```
+
+**Валидация:**
+- `check_interval` — INTEGER, 10–300
+- `stuck_timeout` — INTEGER, 1–60
+
+**Ответ:** обновлённый объект `config` (такой же формат как в GET /api/autopilot → config)
+
+---
+
+### GET /api/autopilot/pets
+
+Список петов авто-пилота.
+
+**Ответ:**
+```json
+[
+  { "id": 1, "pet_id": "soggy_spring_2026_strawberry_shortcake_ducky" },
+  { "id": 2, "pet_id": "basic_egg_2022_alicorn" }
+]
+```
+
+---
+
+### POST /api/autopilot/pets
+
+Добавить пет.
+
+**Тело:**
+```json
+{ "pet_id": "soggy_spring_2026_strawberry_shortcake_ducky" }
+```
+
+**Ответ (успех):**
+```json
+{ "id": 3, "pet_id": "soggy_spring_2026_strawberry_shortcake_ducky" }
+```
+
+**Ответ (дубликат):** HTTP 409
+```json
+{ "error": "Такой пет уже добавлен" }
+```
+
+---
+
+### DELETE /api/autopilot/pets/{id}
+
+Удалить пет по `id` (row id из таблицы `autopilot_pets`).
+
+**Ответ:** `{ "ok": true }`
+
+---
+
+### GET /api/player-configs
+
+Список игровых конфигов из AccountsOps (для выбора трейд/фарм конфига).
+
+**Ответ:**
+```json
+[
+  { "id": 1, "name": "Trade Config" },
+  { "id": 2, "name": "Farm Config" }
+]
+```
+
+---
+
+### GET /api/alerts
+
+**Ответ:**
+```json
+{
+  "threshold": 50,
+  "enabled": true,
+  "triggered": false
+}
+```
+`triggered` — `true` если порог уже сработал и ждём восстановления (информационное поле).
+
+---
+
+### PUT /api/alerts
+
+**Тело (оба поля опциональны):**
+```json
+{
+  "threshold": 50,
+  "enabled": true
+}
+```
+
+**Ответ:** обновлённый объект alerts (формат как GET /api/alerts).
+
+---
+
+## 8. Таблица событий авто-пилота (для `recent`)
+
+Для ленты событий требуется отдельная таблица в БД. Бот пишет события в неё в процессе работы авто-пилота.
+
+```sql
+CREATE TABLE IF NOT EXISTS autopilot_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    username   TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+```
+
+**event_type** — одно из: `started` / `stopped` / `got_pet` / `trade_complete` / `stuck`
+
+**Когда писать событие:**
+
+| Событие | Когда |
+|---|---|
+| `started` | При вызове ap_start, после построения очереди |
+| `stopped` | При вызове ap_stop |
+| `got_pet` | В цикле: аккаунт перешёл `farming → trading` |
+| `trade_complete` | В цикле: аккаунт перешёл `trading → farming` (пет передан) |
+| `stuck` | В цикле: аккаунт возвращён в farming по таймауту |
+
+**Очистка:** при вызове `ap_start` удалять старые события этого user_id (или хранить последние N=100).
+
+**Пример запроса в GET /api/autopilot:**
+```sql
+SELECT event_type, username, created_at
+FROM autopilot_events
+WHERE user_id = ?
+ORDER BY id DESC
+LIMIT 20
+```
 ```
