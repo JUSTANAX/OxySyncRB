@@ -277,6 +277,10 @@ async def set_accounts_enabled(api_key: str, usernames: list[str], enabled: bool
     return await _patch(api_key, "/api/accounts/enable", {"usernames": usernames, "enabled": enabled})
 
 
+async def set_accounts_config(api_key: str, usernames: list[str], config_id: int) -> tuple[bool, any, str]:
+    return await _post(api_key, "/api/accounts/config", {"usernames": usernames, "config_id": config_id})
+
+
 async def get_accounts_with_pet_details(api_key: str, pet_kind: str) -> tuple[bool, list, str]:
     """Returns list of (account_id, username) for accounts that have the specified pet_kind."""
     ok, accounts, err = await get_trackstats_accounts(api_key)

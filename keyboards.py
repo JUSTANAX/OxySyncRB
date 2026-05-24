@@ -57,6 +57,7 @@ def auto_enable_pet_kb(enabled: bool) -> InlineKeyboardMarkup:
 def autopilot_kb(
     main_account: str | None,
     pet_id: str | None,
+    config_id: int | None,
     running: bool,
     auto_enabled: bool,
 ) -> InlineKeyboardMarkup:
@@ -69,8 +70,11 @@ def autopilot_kb(
     else:
         pet_label = "🦆 Задать пет"
 
+    cfg_label = f"⚙️ Конфиг: {config_id}" if config_id else "⚙️ Задать конфиг"
+
     rows.append([InlineKeyboardButton(text=main_label, callback_data="ap_set_main")])
     rows.append([InlineKeyboardButton(text=pet_label,  callback_data="ap_set_pet")])
+    rows.append([InlineKeyboardButton(text=cfg_label,  callback_data="ap_set_config")])
 
     if running:
         rows.append([

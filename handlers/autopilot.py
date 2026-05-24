@@ -4,11 +4,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest
 
-from api.accountsops import get_accounts_with_pet_details, set_accounts_enabled, get_trackstats_accounts
+from api.accountsops import get_accounts_with_pet_details, set_accounts_enabled, set_accounts_config, get_trackstats_accounts
 from database import (
     get_panel,
     get_autopilot_config,
-    save_autopilot_main, save_autopilot_pet,
+    save_autopilot_main, save_autopilot_pet, save_autopilot_config_id,
     set_autopilot_running,
     get_autopilot_active_count, get_autopilot_done_count,
     get_autopilot_active_entries, get_autopilot_pending_entries,
@@ -24,6 +24,7 @@ router = Router()
 class APStates(StatesGroup):
     waiting_main_account = State()
     waiting_pet_id       = State()
+    waiting_config_id    = State()
 
 
 def _build_autopilot_page(user_id: int) -> tuple[str, any]:
@@ -31,13 +32,16 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     running      = cfg["running"]      if cfg else False
     main_account = cfg["main_account"] if cfg else None
     pet_id       = cfg["pet_id"]       if cfg else None
+    config_id    = cfg["config_id"]    if cfg else None
     auto_enabled = get_auto_enable_pet(user_id)
 
     lines = ["🤖 <b>Авто-пилот</b>", ""]
-    main_str = f"<code>{main_account}</code>" if main_account else "<i>не задан</i>"
-    pet_str  = f"<code>{pet_id}</code>"       if pet_id       else "<i>не задан</i>"
+    main_str   = f"<code>{main_account}</code>" if main_account else "<i>не задан</i>"
+    pet_str    = f"<code>{pet_id}</code>"        if pet_id       else "<i>не задан</i>"
+    config_str = f"<code>{config_id}</code>"     if config_id    else "<i>не задан</i>"
     lines.append(f"👤 Аккаунт: {main_str}")
     lines.append(f"🦆 Пет: {pet_str}")
+    lines.append(f"⚙️ Конфиг: {config_str}")
     lines.append("")
 
     if running:
@@ -53,7 +57,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     else:
         lines.append("⏹ <b>Остановлен</b>")
 
-    return "\n".join(lines), autopilot_kb(main_account, pet_id, running, auto_enabled)
+    return "\n".join(lines), autopilot_kb(main_account, pet_id, config_id, running, auto_enabled)
 
 
 async def _show_autopilot(target, user_id: int, edit: bool = False):
@@ -105,6 +109,32 @@ async def ap_receive_main(message: Message, state: FSMContext):
         await message.answer("❌ Введи корректный username:", reply_markup=cancel_to_ap_kb())
         return
     save_autopilot_main(message.from_user.id, username)
+    await state.clear()
+    await _show_autopilot(message, message.from_user.id)
+
+
+# ─── Задать конфиг ───────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_set_config")
+async def ap_set_config(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(APStates.waiting_config_id)
+    await callback.message.edit_text(
+        "⚙️ Введи <b>ID конфига</b>:\n\n"
+        "<i>Числовой ID из AccountsOps, например: <code>487</code></i>",
+        parse_mode="HTML",
+        reply_markup=cancel_to_ap_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(APStates.waiting_config_id)
+async def ap_receive_config(message: Message, state: FSMContext):
+    text = message.text.strip()
+    await message.delete()
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("❌ Введи корректный числовой ID:", reply_markup=cancel_to_ap_kb())
+        return
+    save_autopilot_config_id(message.from_user.id, int(text))
     await state.clear()
     await _show_autopilot(message, message.from_user.id)
 
@@ -172,13 +202,15 @@ async def ap_start(callback: CallbackQuery):
         parse_mode="HTML",
     )
 
+    config_id = cfg.get("config_id")
+    auto_en   = get_auto_enable_pet(user_id)
+
     ok_main, _, err_main = await set_accounts_enabled(ao_key, [cfg["main_account"]], True)
     if not ok_main:
         await callback.message.edit_text(
             f"🤖 <b>Авто-пилот</b>\n\n❌ Ошибка включения основного аккаунта: {err_main}",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], cfg["pet_id"], False,
-                                      get_auto_enable_pet(user_id)),
+            reply_markup=autopilot_kb(cfg["main_account"], cfg["pet_id"], config_id, False, auto_en),
         )
         return
 
@@ -193,8 +225,7 @@ async def ap_start(callback: CallbackQuery):
         await callback.message.edit_text(
             f"🤖 <b>Авто-пилот</b>\n\n❌ Ошибка сканирования: {err}",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], cfg["pet_id"], False,
-                                      get_auto_enable_pet(user_id)),
+            reply_markup=autopilot_kb(cfg["main_account"], cfg["pet_id"], config_id, False, auto_en),
         )
         return
 
@@ -210,14 +241,19 @@ async def ap_start(callback: CallbackQuery):
             "ℹ️ Аккаунтов с этим петом не найдено.\n"
             "Основной аккаунт отключён.",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], cfg["pet_id"], False,
-                                      get_auto_enable_pet(user_id)),
+            reply_markup=autopilot_kb(cfg["main_account"], cfg["pet_id"], config_id, False, auto_en),
         )
         return
 
     clear_autopilot_queue(user_id)
     add_autopilot_queue(user_id, queue_accounts)
     set_autopilot_running(user_id, True)
+
+    # Apply config to all queued accounts if set
+    config_id = cfg.get("config_id")
+    if config_id:
+        all_usernames = [u for _, u in queue_accounts]
+        await set_accounts_config(ao_key, all_usernames, config_id)
 
     first_batch = get_autopilot_pending_entries(user_id)[:10]
     if first_batch:

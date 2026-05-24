@@ -72,6 +72,7 @@ def init_db():
             user_id       INTEGER PRIMARY KEY,
             main_account  TEXT,
             pet_id        TEXT,
+            config_id     INTEGER,
             running       INTEGER DEFAULT 0
         );
 
@@ -89,6 +90,7 @@ def init_db():
         "ALTER TABLE alert_thresholds ADD COLUMN triggered INTEGER DEFAULT 0",
         "ALTER TABLE auto_unlock ADD COLUMN interval_hours REAL DEFAULT 3.0",
         "ALTER TABLE auto_unlock ADD COLUMN last_run_at TEXT",
+        "ALTER TABLE autopilot_config ADD COLUMN config_id INTEGER",
     ):
         try:
             conn.execute(stmt)
@@ -414,12 +416,12 @@ def set_auto_enable_pet_notified(user_id: int):
 def get_autopilot_config(user_id: int) -> dict | None:
     conn = _get_conn()
     row = conn.execute(
-        "SELECT main_account, pet_id, running FROM autopilot_config WHERE user_id = ?",
+        "SELECT main_account, pet_id, config_id, running FROM autopilot_config WHERE user_id = ?",
         (user_id,),
     ).fetchone()
     if not row:
         return None
-    return {"main_account": row[0], "pet_id": row[1], "running": bool(row[2])}
+    return {"main_account": row[0], "pet_id": row[1], "config_id": row[2], "running": bool(row[3])}
 
 
 def save_autopilot_main(user_id: int, main_account: str):
@@ -428,6 +430,15 @@ def save_autopilot_main(user_id: int, main_account: str):
         "INSERT INTO autopilot_config (user_id, main_account) VALUES (?, ?) "
         "ON CONFLICT(user_id) DO UPDATE SET main_account = excluded.main_account",
         (user_id, main_account),
+    )
+
+
+def save_autopilot_config_id(user_id: int, config_id: int):
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO autopilot_config (user_id, config_id) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET config_id = excluded.config_id",
+        (user_id, config_id),
     )
 
 
