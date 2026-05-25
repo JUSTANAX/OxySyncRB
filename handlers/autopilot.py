@@ -636,16 +636,14 @@ async def ap_start(callback: CallbackQuery):
         )
         await set_accounts_config(ao_key, farm_usernames, farm_config_id)
 
-    # Enable main account
+    # Enable all accounts
     await callback.message.edit_text(
-        "🤖 <b>Авто-пилот</b>\n\n⏳ Запускаю аккаунты...",
+        "🤖 <b>Авто-пилот</b>\n\n⏳ Включаю аккаунты...",
         parse_mode="HTML",
     )
     await set_accounts_enabled(ao_key, [cfg["main_account"]], True)
-
-    # Restart all farm accounts via native endpoint (fast)
     if farm_usernames:
-        await restart_accounts(ao_key, farm_usernames)
+        await set_accounts_enabled(ao_key, farm_usernames, True)
 
     clear_autopilot_queue(user_id)
     add_autopilot_queue(user_id, farm_accounts, status='farming')
