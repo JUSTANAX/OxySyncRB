@@ -561,17 +561,52 @@ async def get_account_folders(api_key: str) -> tuple[bool, list, str]:
     return True, [], ""
 
 
+async def _put_2xx(api_key: str, endpoint: str, body: dict) -> tuple[bool, any, str]:
+    """Like _put but accepts any 2xx status (e.g. 204 No Content)."""
+    headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
+    url = f"{ACCOUNTSOPS_URL}{endpoint}"
+    last_err = "Не удалось подключиться к AccountsOps."
+    for attempt in range(3):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.put(
+                    url, headers=headers, json=body,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    raw = await resp.text()
+                    if resp.status == 401:
+                        return False, None, "Неверный API ключ."
+                    if resp.status == 403:
+                        return False, None, "Доступ запрещён."
+                    if not (200 <= resp.status < 300):
+                        return False, None, f"код {resp.status} | {raw[:300]}"
+                    data = json.loads(raw) if raw.strip() else {}
+                    return True, data, ""
+        except asyncio.TimeoutError:
+            last_err = "Превышен таймаут AccountsOps."
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+        except _RETRY_EXC:
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+        except Exception as e:
+            return False, None, f"Ошибка: {e}"
+    return False, None, last_err
+
+
 async def move_accounts_to_folder(
     api_key: str,
     usernames: list[str],
     folder_id: int,
     section: str = "input",
 ) -> tuple[bool, any, str]:
+    if not usernames:
+        return True, None, ""
     CHUNK = 50
     last_err = ""
-    for i in range(0, max(len(usernames), 1), CHUNK):
+    for i in range(0, len(usernames), CHUNK):
         chunk = usernames[i:i + CHUNK]
-        ok, _, err = await _put(api_key, "/api/accounts/move-to-folder", {
+        ok, _, err = await _put_2xx(api_key, "/api/accounts/move-to-folder", {
             "usernames": chunk,
             "folder_id": folder_id,
             "section":   section,
