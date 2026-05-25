@@ -79,6 +79,7 @@ charts.py               — генерация графиков (Pillow, не и
 | stuck_timeout | INTEGER | 10 | Минут до возврата зависшего аккаунта в фарм |
 | last_checked_at | TEXT | | Последняя обработка цикла |
 | trades_done | INTEGER | 0 | Счётчик завершённых трейдов за сессию |
+| max_traders_per_server | INTEGER | 10 | Макс. кол-во одновременно торгующих аккаунтов на один VIP-сервер |
 
 ### `autopilot_pets`
 | Поле | Тип | Описание |
@@ -545,6 +546,7 @@ HTTP 409 если задача уже активна.
   "farm_config_id": 3,
   "check_interval": 30,
   "stuck_timeout": 10,
+  "max_traders_per_server": 10,
   "started_at": "2026-05-24T10:00:00Z",
   "pets": [
     { "id": 1, "pet_id": "soggy_spring_2026_strawberry_shortcake_ducky" },
@@ -632,15 +634,17 @@ HTTP 409 если задача уже активна.
   "config_id": 5,
   "farm_config_id": 3,
   "check_interval": 30,
-  "stuck_timeout": 10
+  "stuck_timeout": 10,
+  "max_traders_per_server": 10
 }
 ```
 
 **Валидация:**
 - `check_interval` — INTEGER, 10–300
 - `stuck_timeout` — INTEGER, 1–60
+- `max_traders_per_server` — INTEGER, 1–50
 
-**Ответ:** обновлённый конфиг в том же плоском формате что и в GET /api/autopilot (поля `main_account`, `config_id`, `farm_config_id`, `check_interval`, `stuck_timeout`)
+**Ответ:** обновлённый конфиг в том же плоском формате что и в GET /api/autopilot (поля `main_account`, `config_id`, `farm_config_id`, `check_interval`, `stuck_timeout`, `max_traders_per_server`)
 
 ---
 
@@ -858,3 +862,7 @@ zpBalance: data.zp_balance?.effective ?? null
 
 **9. `trades_done`** — уже возвращается в `GET /api/autopilot` как `trades_done: N`.  
 Добавить в строку статуса, например: `Фармит: X · Торгует: Y · Сделок: Z`.
+
+**10. `max_traders_per_server`** — степпер, диапазон 1–50, дефолт 10.  
+Сохраняет через `PUT /api/autopilot/config { max_traders_per_server: N }`.  
+Описание: «Макс. трейдеров на один VIP-сервер».

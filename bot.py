@@ -220,7 +220,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     pet_ids_set     = {pid for _, pid in pet_rows}
     trade_config_id = cfg.get("config_id")
     farm_config_id  = cfg.get("farm_config_id")
-    batch_size      = cfg.get("batch_size") or 10
+    max_traders_per_server = cfg.get("max_traders_per_server") or 10
 
     # Check trading accounts — did they trade the pet?
     for entry_id, acc_id, username in get_autopilot_trading_entries(user_id):
@@ -260,7 +260,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     # Check farming accounts — did they get the pet?
     current_trading = get_autopilot_trading_count(user_id)
     for entry_id, acc_id, username in get_autopilot_farming_entries(user_id):
-        if current_trading >= batch_size:
+        if current_trading >= max_traders_per_server:
             break
         ok, pets, _ = await get_account_pets(ao_key, acc_id)
         if not ok:
@@ -329,9 +329,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.5.7 запущен ✅")
+    print("OxySync Bot v1.5.8 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.5.7</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.5.8</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
