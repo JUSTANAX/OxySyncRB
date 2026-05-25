@@ -119,14 +119,15 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
     # existing folders: name → id
     folder_map: dict[str, int] = {f["name"]: f["id"] for f in (existing_folders if ok_fld else [])}
 
-    # group by device_id
+    # group by device_id; accounts without a device go to a dedicated bucket
+    NO_DEVICE_KEY = "No Device"
     by_device: dict[str, list[str]] = defaultdict(list)
     for acc in all_accounts:
         device_id = (acc.get("device_id") or "").strip()
         username  = (acc.get("username") or acc.get("name") or "").strip()
-        if not device_id or not username:
+        if not username:
             continue
-        by_device[device_id].append(username)
+        by_device[device_id or NO_DEVICE_KEY].append(username)
 
     total_live = total_dead = created = 0
 
