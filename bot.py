@@ -9,7 +9,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import TelegramObject
 
 import os
-from config import BOT_TOKEN, OWNER_ID, ACCOUNTSOPS_KEY, ZP_KEY, DB_PATH
+from config import BOT_TOKEN, OWNER_ID, ACCOUNTSOPS_KEY, ZP_KEY
 from database import (
     init_db,
     save_panel, save_zp_key,
