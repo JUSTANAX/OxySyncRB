@@ -10,6 +10,7 @@ from api.accountsops import (
     get_accounts_with_pet_details, set_accounts_enabled, set_accounts_config,
     get_trackstats_accounts, get_configs, get_usernames_by_tag,
     get_account_inventory_by_username, _pet_tier, _pet_display_name,
+    restart_accounts,
 )
 from database import (
     get_panel,
@@ -637,6 +638,32 @@ async def ap_start(callback: CallbackQuery):
     set_autopilot_started_at(user_id)
     set_autopilot_running(user_id, True)
     add_autopilot_event(user_id, "started")
+
+    await _show_autopilot(callback.message, user_id, edit=True)
+
+
+# ─── Рестарт трейдеров ───────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_restart_trading")
+async def ap_restart_trading(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    ao_key  = get_panel(user_id)
+    if not ao_key:
+        await callback.answer("❌ AccountsOps не подключён.", show_alert=True)
+        return
+
+    trading = get_autopilot_trading_entries(user_id)
+    if not trading:
+        await callback.answer("ℹ️ Нет аккаунтов в трейде.", show_alert=True)
+        return
+
+    usernames = [u for _, _, u in trading]
+    await callback.answer(f"⚡️ Рестарт {len(usernames)} трейдеров...")
+
+    ok, _, err = await restart_accounts(ao_key, usernames)
+    if not ok:
+        await callback.answer(f"❌ {err}", show_alert=True)
+        return
 
     await _show_autopilot(callback.message, user_id, edit=True)
 

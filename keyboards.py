@@ -100,6 +100,7 @@ def autopilot_kb(
             InlineKeyboardButton(text="🔄 Обновить",   callback_data="ap_refresh"),
             InlineKeyboardButton(text="⏹ Остановить", callback_data="ap_stop"),
         ])
+        rows.append([InlineKeyboardButton(text="⚡️ Рестарт трейдеров", callback_data="ap_restart_trading")])
     else:
         rows.append([InlineKeyboardButton(text="▶️ Запустить", callback_data="ap_start")])
 

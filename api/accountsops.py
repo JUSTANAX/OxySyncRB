@@ -328,6 +328,31 @@ async def get_usernames_by_tag(api_key: str, tag: str) -> set[str]:
     return usernames
 
 
+async def get_limits_status(api_key: str) -> tuple[bool, dict, str]:
+    return await _get(api_key, "/api/limits/status")
+
+
+async def restart_accounts(api_key: str, usernames: list[str]) -> tuple[bool, any, str]:
+    ok, status, err = await get_limits_status(api_key)
+    if not ok:
+        return False, None, err
+    device_ids = [d["device_id"] for d in status.get("devices", []) if d.get("device_id")]
+    if not device_ids:
+        return False, None, "Устройства не найдены."
+
+    CHUNK = 50
+    last_err = ""
+    for device_id in device_ids:
+        for i in range(0, max(len(usernames), 1), CHUNK):
+            chunk = usernames[i:i + CHUNK]
+            ok, _, err = await _post(api_key, f"/api/devices/{device_id}/restart-accounts", {"usernames": chunk})
+            if not ok:
+                last_err = err
+    if last_err:
+        return False, None, last_err
+    return True, None, ""
+
+
 async def set_accounts_enabled(api_key: str, usernames: list[str], enabled: bool) -> tuple[bool, any, str]:
     CHUNK = 50
     last_err = ""
