@@ -626,14 +626,26 @@ async def ap_start(callback: CallbackQuery):
         )
         return
 
-    ok_main, _, err_main = await set_accounts_enabled(ao_key, [cfg["main_account"]], True)
-    if not ok_main:
+    farm_usernames = [u for _, u in farm_accounts]
+
+    # Apply farm config to all farm accounts
+    if farm_config_id and farm_usernames:
         await callback.message.edit_text(
-            f"🤖 <b>Авто-пилот</b>\n\n❌ Ошибка включения основного аккаунта: {err_main}",
+            "🤖 <b>Авто-пилот</b>\n\n⏳ Применяю фарм конфиг...",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False, cfg.get("check_interval", 30), cfg.get("stuck_timeout", 10), cfg.get("batch_size", 10)),
         )
-        return
+        await set_accounts_config(ao_key, farm_usernames, farm_config_id)
+
+    # Enable main account
+    await callback.message.edit_text(
+        "🤖 <b>Авто-пилот</b>\n\n⏳ Запускаю аккаунты...",
+        parse_mode="HTML",
+    )
+    await set_accounts_enabled(ao_key, [cfg["main_account"]], True)
+
+    # Restart all farm accounts via native endpoint (fast)
+    if farm_usernames:
+        await restart_accounts(ao_key, farm_usernames)
 
     clear_autopilot_queue(user_id)
     add_autopilot_queue(user_id, farm_accounts, status='farming')
@@ -837,14 +849,14 @@ async def ap_stop(callback: CallbackQuery):
     await callback.answer("⏹ Останавливаю...")
 
     if ao_key:
-        cfg     = get_autopilot_config(user_id)
-        trading = get_autopilot_trading_entries(user_id)
-        if trading:
-            farm_config_id = cfg.get("farm_config_id") if cfg else None
-            usernames = [u for _, _, u in trading]
-            if farm_config_id:
-                await set_accounts_config(ao_key, usernames, farm_config_id)
-            await restart_accounts(ao_key, usernames)
+        cfg      = get_autopilot_config(user_id)
+        farming  = get_autopilot_farming_entries(user_id)
+        trading  = get_autopilot_trading_entries(user_id)
+        all_entries = farming + trading
+        if all_entries:
+            await set_accounts_enabled(ao_key, [u for _, _, u in all_entries], False)
+        if cfg and cfg["main_account"]:
+            await set_accounts_enabled(ao_key, [cfg["main_account"]], False)
 
     clear_autopilot_queue(user_id)
     set_autopilot_running(user_id, False)
