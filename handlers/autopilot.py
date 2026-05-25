@@ -643,6 +643,17 @@ async def ap_start(callback: CallbackQuery):
 
 # ─── Инвентарь основного аккаунта ────────────────────────────────────────────
 
+def _pet_age(pet: dict) -> int | None:
+    raw = pet.get("age") or pet.get("level") or pet.get("age_stage")
+    if raw is None:
+        return None
+    try:
+        v = int(raw)
+        return max(1, min(6, v if v >= 1 else v + 1))
+    except Exception:
+        return None
+
+
 async def _build_inventory_text(user_id: int) -> str:
     ao_key = get_panel(user_id)
     cfg    = get_autopilot_config(user_id)
@@ -656,37 +667,39 @@ async def _build_inventory_text(user_id: int) -> str:
     if not pets:
         return f"📦 <b>Инвентарь: {main}</b>\n\n<i>Инвентарь пуст</i>"
 
-    groups: dict[str, list] = {"mega": [], "neon": [], "normal": []}
+    # Aggregate: (tier, name) -> [age, age, ...]
+    from collections import defaultdict
+    agg: dict[tuple, list] = defaultdict(list)
     for pet in pets:
         tier = _pet_tier(pet)
         name = _pet_display_name(pet)
         qty  = pet.get("quantity", 1) or 1
-        groups[tier].append((name, qty))
+        age  = _pet_age(pet)
+        agg[(tier, name)].extend([age] * qty)
 
-    for tier in groups:
-        groups[tier].sort(key=lambda x: (-x[1], x[0]))
+    def _render_group(tier: str, emoji: str, label: str) -> list[str]:
+        items = [(name, ages) for (t, name), ages in agg.items() if t == tier]
+        if not items:
+            return []
+        items.sort(key=lambda x: (-len(x[1]), x[0]))
+        result = [f"{emoji} <b>{label}</b>"]
+        for name, ages in items:
+            cnt      = len(ages)
+            known    = sorted(a for a in ages if a is not None)
+            age_str  = " " + "·".join(str(a) for a in known) if known else ""
+            result.append(f"  • {name} ×{cnt}{age_str}")
+        return result
 
     lines = [f"📦 <b>Инвентарь: <code>{main}</code></b>", ""]
 
-    if groups["mega"]:
-        lines.append("🌟 <b>Мега-Неон</b>")
-        for name, qty in groups["mega"]:
-            lines.append(f"  • {name} × <b>{qty}</b>")
-        lines.append("")
+    for part in (_render_group("mega",   "🌟", "Мега-Неон"),
+                 _render_group("neon",   "✨", "Неон"),
+                 _render_group("normal", "🦆", "Обычные")):
+        if part:
+            lines.extend(part)
+            lines.append("")
 
-    if groups["neon"]:
-        lines.append("✨ <b>Неон</b>")
-        for name, qty in groups["neon"]:
-            lines.append(f"  • {name} × <b>{qty}</b>")
-        lines.append("")
-
-    if groups["normal"]:
-        lines.append("🦆 <b>Обычные</b>")
-        for name, qty in groups["normal"]:
-            lines.append(f"  • {name} × <b>{qty}</b>")
-
-    total = sum(qty for pets_list in groups.values() for _, qty in pets_list)
-    lines.append("")
+    total = sum(len(ages) for ages in agg.values())
     lines.append(f"<i>Всего: {total} питомцев</i>")
     return "\n".join(lines)
 
