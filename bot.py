@@ -29,10 +29,13 @@ from database import (
     save_autopilot_ready_count,
     get_autopilot_queue_usernames,
     add_autopilot_queue,
+    get_users_due_for_autoswap,
+    get_autoswap_config as get_autoswap_cfg,
 )
 from handlers import start
 from handlers import faceunlock
 from handlers import autopilot
+from handlers import autoswap
 from handlers.start import build_stats_text
 from keyboards import stats_kb
 from state_cache import get_all_stats_msgs, clear_stats_msg
@@ -387,6 +390,31 @@ async def autopilot_transfer_loop(bot: Bot):
             logging.error("Autopilot transfer loop error: %s", e)
 
 
+async def run_autoswap(bot: Bot):
+    from handlers.autoswap import do_sort
+    for user_id, ao_key in get_users_due_for_autoswap():
+        try:
+            live_count, dead_count = await do_sort(ao_key, user_id)
+            cfg = get_autoswap_cfg(user_id)
+            live_name = (cfg.get("live_folder_name") or cfg.get("live_folder_id")) if cfg else "?"
+            dead_name = (cfg.get("dead_folder_name") or cfg.get("dead_folder_id")) if cfg else "?"
+            lines = ["🔄 <b>AutoSwap</b> — авто-сортировка выполнена", ""]
+            lines.append(f"✅ Живых → «{live_name}»: <b>{live_count}</b>")
+            lines.append(f"💀 Мёртвых → «{dead_name}»: <b>{dead_count}</b>")
+            await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML")
+        except Exception as e:
+            logging.error("AutoSwap run user=%s: %s", user_id, e)
+
+
+async def autoswap_loop(bot: Bot):
+    while True:
+        await asyncio.sleep(1800)
+        try:
+            await run_autoswap(bot)
+        except Exception as e:
+            logging.error("AutoSwap loop error: %s", e)
+
+
 async def main():
     init_db()
     if ACCOUNTSOPS_KEY:
@@ -409,15 +437,17 @@ async def main():
     dp.update.middleware(OwnerOnly())
     dp.include_router(faceunlock.router)
     dp.include_router(autopilot.router)
+    dp.include_router(autoswap.router)
     dp.include_router(start.router)
     asyncio.create_task(alert_loop(bot))
     asyncio.create_task(auto_unlock_loop(bot))
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.8.5 запущен ✅")
+    asyncio.create_task(autoswap_loop(bot))
+    print("OxySync Bot v1.9.0 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.8.5</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.9.0</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

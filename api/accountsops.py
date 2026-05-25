@@ -520,6 +520,37 @@ async def get_totals(api_key: str) -> tuple[bool, dict, str]:
     return True, {"money": money, "potions": potions}, ""
 
 
+async def get_account_folders(api_key: str) -> tuple[bool, list, str]:
+    ok, data, err = await _get(api_key, "/api/account-folders")
+    if not ok:
+        return False, [], err
+    if isinstance(data, list):
+        return True, data, ""
+    return True, [], ""
+
+
+async def move_accounts_to_folder(
+    api_key: str,
+    usernames: list[str],
+    folder_id: int,
+    section: str = "input",
+) -> tuple[bool, any, str]:
+    CHUNK = 50
+    last_err = ""
+    for i in range(0, max(len(usernames), 1), CHUNK):
+        chunk = usernames[i:i + CHUNK]
+        ok, _, err = await _put(api_key, "/api/accounts/move-to-folder", {
+            "usernames": chunk,
+            "folder_id": folder_id,
+            "section":   section,
+        })
+        if not ok:
+            last_err = err
+    if last_err:
+        return False, None, last_err
+    return True, None, ""
+
+
 def filter_pets(pets: dict, search: str, exclude: str | None = None) -> dict:
     """Return pets whose display name contains search (case-insensitive).
     Optionally exclude pets whose name contains the exclude string."""

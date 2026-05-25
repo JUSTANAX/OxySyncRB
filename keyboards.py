@@ -41,6 +41,7 @@ def alerts_kb(threshold: int | None, enabled: bool) -> InlineKeyboardMarkup:
 def automation_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔓 Auto-Unlock-Face", callback_data="face_unlock")],
+        [InlineKeyboardButton(text="🔄 AutoSwap",          callback_data="autoswap")],
         [InlineKeyboardButton(text="🤖 Авто-пилот",        callback_data="autopilot")],
         [InlineKeyboardButton(text="🔙 Назад",              callback_data="back")],
     ])
@@ -147,6 +148,66 @@ def configs_kb(configs: list[dict]) -> InlineKeyboardMarkup:
             callback_data=f"ap_cfg:{cfg_id}",
         )])
     rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="autopilot")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def autoswap_kb(
+    live_folder_id: int | None,
+    dead_folder_id: int | None,
+    auto_enabled: bool,
+    interval_hours: float,
+) -> InlineKeyboardMarkup:
+    rows = []
+
+    live_label = f"✅ Живые: папка {live_folder_id}" if live_folder_id else "✅ Задать папку живых"
+    dead_label = f"💀 Мёртвые: папка {dead_folder_id}" if dead_folder_id else "💀 Задать папку мёртвых"
+
+    rows.append([InlineKeyboardButton(text=live_label, callback_data="as_set_live_folder")])
+    rows.append([InlineKeyboardButton(text=dead_label, callback_data="as_set_dead_folder")])
+    rows.append([InlineKeyboardButton(text="▶️ Запустить сортировку", callback_data="as_run")])
+
+    auto_label = "🔁 Авто: ✅" if auto_enabled else "🔁 Авто: ❌"
+    if auto_enabled:
+        hours_str = f"{int(interval_hours)}ч" if interval_hours == int(interval_hours) else f"{interval_hours}ч"
+        rows.append([
+            InlineKeyboardButton(text=auto_label,        callback_data="as_auto_toggle"),
+            InlineKeyboardButton(text=f"⏱ {hours_str}", callback_data="as_interval_cycle"),
+        ])
+    else:
+        rows.append([InlineKeyboardButton(text=auto_label, callback_data="as_auto_toggle")])
+
+    rows.append([
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="as_refresh"),
+        InlineKeyboardButton(text="🔙 Назад",    callback_data="automation"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def as_live_folders_kb(folders: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for f in folders:
+        fid   = f.get("id")
+        fname = f.get("name") or str(fid)
+        count = f.get("input_count", 0)
+        rows.append([InlineKeyboardButton(
+            text=f"✅ {fname}  ({count} акк.)",
+            callback_data=f"as_live:{fid}:{fname}",
+        )])
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="autoswap")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def as_dead_folders_kb(folders: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for f in folders:
+        fid   = f.get("id")
+        fname = f.get("name") or str(fid)
+        count = f.get("input_count", 0)
+        rows.append([InlineKeyboardButton(
+            text=f"💀 {fname}  ({count} акк.)",
+            callback_data=f"as_dead:{fid}:{fname}",
+        )])
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="autoswap")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
