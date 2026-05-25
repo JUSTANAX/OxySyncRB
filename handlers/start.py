@@ -20,9 +20,9 @@ from state_cache import save_stats_msg, clear_stats_msg
 
 PERIODS = [
     (1,   "1ч"),
+    (6,   "6ч"),
     (12,  "12ч"),
     (24,  "24ч"),
-    (72,  "3д"),
     (168, "7д"),
 ]
 
@@ -95,45 +95,61 @@ def _fmt_diff(d: dict | None, key: str) -> str:
     return f"+{_fmt_num(v)}" if v > 0 else ("0" if v == 0 else _fmt_num(v))
 
 
+def _diff_row(diffs: dict, key: str, period_slice) -> str:
+    return "  ·  ".join(
+        f"{lbl} {_fmt_diff(diffs.get(lbl), key)}"
+        for _, lbl in period_slice
+    )
+
+
 def _append_totals(lines: list, user_id: int, ok_t: bool, totals: dict):
     lines.append("")
     if not ok_t:
-        lines.append("  💰 <b>Деньги / Зелья</b>: ❌ ошибка загрузки")
+        lines.append("💰 Деньги: ❌  ·  🧪 Зелья: ❌")
         return
     if not totals:
         return
     save_totals_snapshot(user_id, totals["money"], totals["potions"])
-    diffs = {label: get_totals_diff(user_id, totals, hours) for hours, label in PERIODS}
-    lines.append(f"  <i>{'  ·  '.join(lbl for _, lbl in PERIODS)}</i>")
-    money_parts   = "  ·  ".join(_fmt_diff(diffs.get(lbl), "money")   for _, lbl in PERIODS)
-    potions_parts = "  ·  ".join(_fmt_diff(diffs.get(lbl), "potions") for _, lbl in PERIODS)
-    lines.append(f"  💰 <b>Деньги</b>: {_fmt_num(totals['money'])}")
-    lines.append(f"    {money_parts}")
-    lines.append(f"  🧪 <b>Зелья</b>: {_fmt_num(totals['potions'])}")
-    lines.append(f"    {potions_parts}")
+    diffs = {lbl: get_totals_diff(user_id, totals, h) for h, lbl in PERIODS}
+
+    lines.append(f"💰 <b>Деньги:</b> {_fmt_num(totals['money'])}")
+    lines.append(f"  {_diff_row(diffs, 'money', PERIODS[:3])}")
+    lines.append(f"  {_diff_row(diffs, 'money', PERIODS[3:])}")
+    lines.append("")
+    lines.append(f"🧪 <b>Зелья:</b> {_fmt_num(totals['potions'])}")
+    lines.append(f"  {_diff_row(diffs, 'potions', PERIODS[:3])}")
+    lines.append(f"  {_diff_row(diffs, 'potions', PERIODS[3:])}")
 
 
-def _build_lines(ok_d, dash, err_d, ok_zp, zp_bal) -> list[str]:
-    status = "🟢 AccountsOps" if ok_d else "🔴 AccountsOps"
-    lines  = [f"📊 <b>OxySync</b>\n{status}"]
+def _build_lines(ok_d, dash, err_d) -> list[str]:
     if ok_d:
-        active        = dash.get("active_count",   0)
-        total_passive = (dash.get("queue_count",    0)
-                       + dash.get("joining_count",  0)
-                       + dash.get("connected_count", 0))
-        unstable      = dash.get("unstable_count", 0)
-        lines.append("")
-        lines.append(f"  👥  ✅ {active}   💤 {total_passive}   ⚠️ {unstable}")
+        active   = dash.get("active_count",   0)
+        queue    = dash.get("queue_count",    0) + dash.get("joining_count", 0)
+        unstable = dash.get("unstable_count", 0)
+        status_line = "🟢 <b>AccountsOps</b>"
+        parts = [f"▶️ В игре: <b>{active}</b>"]
+        if queue:
+            parts.append(f"⏳ Очередь: <b>{queue}</b>")
+        if unstable:
+            parts.append(f"⚠️ Нест.: <b>{unstable}</b>")
+        account_line = "  " + "  ·  ".join(parts)
     else:
-        lines.append(f"\n❌ {err_d}")
-    if ok_zp:
-        eff = zp_bal.get("effective", 0)
-        res = zp_bal.get("reserved",  0)
-        zp_line = f"  💰 ZP: <b>${eff:.2f}</b>"
-        if res > 0:
-            zp_line += f"  (резерв: ${res:.2f})"
-        lines.append(zp_line)
-    return lines
+        status_line  = "🔴 <b>AccountsOps</b>"
+        account_line = f"  ❌ {err_d}"
+
+    return [f"📊 <b>OxySync</b>", status_line, account_line]
+
+
+def _append_zp(lines: list, ok_zp: bool, zp_bal: dict):
+    if not ok_zp:
+        return
+    eff = zp_bal.get("effective", 0)
+    res = zp_bal.get("reserved",  0)
+    lines.append("")
+    zp_line = f"💵 ZP: <b>${eff:.2f}</b>"
+    if res > 0:
+        zp_line += f"  (резерв: ${res:.2f})"
+    lines.append(zp_line)
 
 
 async def build_stats_text(user_id: int) -> str:
@@ -150,8 +166,9 @@ async def build_stats_text(user_id: int) -> str:
     ok_d,  dash,   err_d = results[0] if not isinstance(results[0], BaseException) else (False, {}, str(results[0]))
     ok_zp, zp_bal, _     = results[1] if not isinstance(results[1], BaseException) else (False, {}, "")
     ok_t,  totals, _     = results[2] if not isinstance(results[2], BaseException) else (False, {}, "")
-    lines = _build_lines(ok_d, dash, err_d, ok_zp, zp_bal)
+    lines = _build_lines(ok_d, dash, err_d)
     _append_totals(lines, user_id, ok_t, totals)
+    _append_zp(lines, ok_zp, zp_bal)
     return "\n".join(lines)
 
 
@@ -215,8 +232,9 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
         except Exception:
             pass
 
-        lines = _build_lines(ok_d, dash, err_d, ok_zp, zp_bal)
+        lines = _build_lines(ok_d, dash, err_d)
         _append_totals(lines, user_id, ok_t, totals)
+        _append_zp(lines, ok_zp, zp_bal)
         text = "\n".join(lines)
 
         try:
