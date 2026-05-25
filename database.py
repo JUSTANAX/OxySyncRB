@@ -503,13 +503,9 @@ def get_autoswap_config(user_id: int) -> dict | None:
         return None
     row = result.data[0]
     return {
-        "live_folder_id":   row.get("live_folder_id"),
-        "live_folder_name": row.get("live_folder_name"),
-        "dead_folder_id":   row.get("dead_folder_id"),
-        "dead_folder_name": row.get("dead_folder_name"),
-        "auto_enabled":     bool(row.get("auto_enabled", 0)),
-        "interval_hours":   float(row.get("interval_hours") or 1.0),
-        "last_run_at":      row.get("last_run_at"),
+        "auto_enabled":   bool(row.get("auto_enabled", 0)),
+        "interval_hours": float(row.get("interval_hours") or 1.0),
+        "last_run_at":    row.get("last_run_at"),
     }
 
 
@@ -521,14 +517,6 @@ def _upsert_autoswap(user_id: int, fields: dict):
             c.table("autoswap_config").insert({"user_id": user_id, **fields}).execute()
         except Exception:
             pass
-
-
-def save_autoswap_live_folder(user_id: int, folder_id: int, folder_name: str):
-    _upsert_autoswap(user_id, {"live_folder_id": folder_id, "live_folder_name": folder_name})
-
-
-def save_autoswap_dead_folder(user_id: int, folder_id: int, folder_name: str):
-    _upsert_autoswap(user_id, {"dead_folder_id": folder_id, "dead_folder_name": folder_name})
 
 
 def toggle_autoswap_auto(user_id: int) -> bool:

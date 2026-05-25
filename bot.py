@@ -394,13 +394,13 @@ async def run_autoswap(bot: Bot):
     from handlers.autoswap import do_sort
     for user_id, ao_key in get_users_due_for_autoswap():
         try:
-            live_count, dead_count = await do_sort(ao_key, user_id)
-            cfg = get_autoswap_cfg(user_id)
-            live_name = (cfg.get("live_folder_name") or cfg.get("live_folder_id")) if cfg else "?"
-            dead_name = (cfg.get("dead_folder_name") or cfg.get("dead_folder_id")) if cfg else "?"
+            stats = await do_sort(ao_key, user_id)
             lines = ["📂 <b>Sorting</b> — авто-сортировка выполнена", ""]
-            lines.append(f"✅ Живых → «{live_name}»: <b>{live_count}</b>")
-            lines.append(f"💀 Мёртвых → «{dead_name}»: <b>{dead_count}</b>")
+            lines.append(f"📱 Девайсов: <b>{stats['devices']}</b>")
+            if stats["created"]:
+                lines.append(f"🆕 Папок создано: <b>{stats['created']}</b>")
+            lines.append(f"✅ Живых (input): <b>{stats['live']}</b>")
+            lines.append(f"💀 Мёртвых (output): <b>{stats['dead']}</b>")
             await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML")
         except Exception as e:
             logging.error("AutoSwap run user=%s: %s", user_id, e)
@@ -445,9 +445,9 @@ async def main():
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
     asyncio.create_task(autoswap_loop(bot))
-    print("OxySync Bot v1.9.0 запущен ✅")
+    print("OxySync Bot v1.9.2 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.9.0</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.9.2</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
