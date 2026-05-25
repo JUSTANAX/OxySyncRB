@@ -159,6 +159,38 @@ async def get_account_pets(api_key: str, account_id) -> tuple[bool, list, str]:
     return ok, data or [], err
 
 
+async def get_pets_batch(api_key: str, account_ids: list) -> dict:
+    """Fetch pets for many accounts concurrently. Returns {acc_id: [pets]}."""
+    if not account_ids:
+        return {}
+    headers = {"X-Api-Key": api_key}
+    sem = asyncio.Semaphore(20)
+
+    async def _fetch(session: aiohttp.ClientSession, acc_id):
+        async with sem:
+            url = f"{ACCOUNTSOPS_URL}/api/trackstats/accounts/{acc_id}/pets"
+            try:
+                async with session.get(
+                    url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    return acc_id, (await resp.json() if resp.status == 200 else [])
+            except Exception:
+                return acc_id, []
+
+    connector = aiohttp.TCPConnector(limit=25, force_close=True)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        results = await asyncio.gather(
+            *[_fetch(session, aid) for aid in account_ids],
+            return_exceptions=True,
+        )
+    return {
+        aid: pets
+        for r in results
+        if not isinstance(r, BaseException)
+        for aid, pets in [r]
+    }
+
+
 async def get_all_pets(api_key: str) -> tuple[bool, dict, str]:
     """Aggregate pets across all accounts using a shared session + semaphore."""
     ok, accounts, err = await get_trackstats_accounts(api_key)

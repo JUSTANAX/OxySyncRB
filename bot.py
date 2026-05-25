@@ -36,7 +36,8 @@ from keyboards import stats_kb
 from state_cache import get_all_stats_msgs, clear_stats_msg
 from api.accountsops import (
     get_dashboard, get_face_accounts,
-    get_account_pets, set_accounts_enabled, set_accounts_config,
+    get_account_pets, get_pets_batch,
+    set_accounts_enabled, set_accounts_config,
 )
 from api.faceunlock import submit_job, get_status
 
@@ -278,14 +279,13 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         except Exception as e:
             logging.error("Stuck notify user=%s: %s", user_id, e)
 
-    # Check farming accounts — group by pet kind, respect per-pet thresholds
-    # Always scan so ready_count stays current even when at capacity
+    # Check farming accounts — fetch all pet inventories in parallel
+    farming_entries = get_autopilot_farming_entries(user_id)
+    pets_map = await get_pets_batch(ao_key, [acc_id for _, acc_id, _ in farming_entries])
+
     ready_by_pet: dict[str, list] = {}
-    for entry_id, acc_id, username in get_autopilot_farming_entries(user_id):
-        ok, pets, _ = await get_account_pets(ao_key, acc_id)
-        if not ok:
-            continue
-        for p in pets:
+    for entry_id, acc_id, username in farming_entries:
+        for p in pets_map.get(acc_id, []):
             kind = p.get("pet_kind")
             if kind in pet_ids_set:
                 ready_by_pet.setdefault(kind, []).append((entry_id, acc_id, username))
@@ -369,9 +369,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.8.1 запущен ✅")
+    print("OxySync Bot v1.8.2 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.8.1</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.8.2</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
