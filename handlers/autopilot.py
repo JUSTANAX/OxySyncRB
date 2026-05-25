@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from aiogram import Router, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -14,6 +15,7 @@ from database import (
     set_autopilot_running, set_autopilot_started_at,
     get_autopilot_farming_entries, get_autopilot_trading_entries,
     get_autopilot_farming_count, get_autopilot_trading_count,
+    get_autopilot_stuck_entries,
     increment_autopilot_trades_done, get_autopilot_trades_done,
     add_autopilot_queue, clear_autopilot_queue,
     set_autopilot_entry_status,
@@ -36,6 +38,19 @@ class APStates(StatesGroup):
     waiting_batch_size     = State()
 
 
+def _runtime_str(started_at: str | None) -> str:
+    if not started_at:
+        return ""
+    try:
+        started = datetime.strptime(started_at.replace("Z", "").split("+")[0], "%Y-%m-%dT%H:%M:%S")
+        delta   = datetime.utcnow() - started
+        h = int(delta.total_seconds() // 3600)
+        m = int((delta.total_seconds() % 3600) // 60)
+        return f"{h}ч {m}м" if h else f"{m}м"
+    except Exception:
+        return ""
+
+
 def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     cfg            = get_autopilot_config(user_id)
     running        = cfg["running"]        if cfg else False
@@ -45,37 +60,55 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     check_interval = cfg["check_interval"] if cfg else 30
     stuck_timeout  = cfg["stuck_timeout"]  if cfg else 10
     batch_size     = cfg["batch_size"]     if cfg else 10
+    trades_done    = cfg["trades_done"]    if cfg else 0
+    started_at     = cfg["started_at"]     if cfg else None
     pets           = get_autopilot_pets(user_id)
     pet_count      = len(pets)
 
     lines = ["🤖 <b>Авто-пилот</b>", ""]
-    main_str       = f"<code>{main_account}</code>"   if main_account   else "<i>не задан</i>"
-    trade_cfg_str  = f"<code>{config_id}</code>"      if config_id      else "<i>не задан</i>"
-    farm_cfg_str   = f"<code>{farm_config_id}</code>" if farm_config_id else "<i>не задан</i>"
-    lines.append(f"👤 Аккаунт: {main_str}")
-    if pets:
-        for _, pid, min_count in pets:
-            min_str = f" (мин: {min_count})" if min_count > 1 else ""
-            lines.append(f"🦆 <code>{pid}</code>{min_str}")
-    else:
-        lines.append("🦆 Петы: <i>не заданы</i>")
-    lines.append(f"🔄 Трейд конфиг: {trade_cfg_str}")
-    lines.append(f"🌾 Фарм конфиг: {farm_cfg_str}")
-    lines.append(f"⏱ Проверка: <b>{check_interval}с</b>  ·  ⏰ Стак: <b>{stuck_timeout}м</b>  ·  📊 Трейдеров: <b>{batch_size}</b>")
-    lines.append("")
 
+    # ── Статус ────────────────────────────────────────────────────────────────
     if running:
+        rt = _runtime_str(started_at)
         farming_count = get_autopilot_farming_count(user_id)
         trading_count = get_autopilot_trading_count(user_id)
-        trades_done   = get_autopilot_trades_done(user_id)
-        lines.append(
-            f"▶️ <b>Запущен</b>  ·  "
-            f"Фармит: {farming_count}  ·  "
-            f"Торгует: {trading_count}  ·  "
-            f"Сделок: {trades_done}"
-        )
+        stuck_count   = len(get_autopilot_stuck_entries(user_id, stuck_timeout * 60))
+
+        rt_part = f"  ·  🕐 {rt}" if rt else ""
+        lines.append(f"▶️ <b>Работает</b>{rt_part}")
+        lines.append("")
+        lines.append(f"  🌾 Фармит         <b>{farming_count}</b>")
+        lines.append(f"  🔄 Трейдит         <b>{trading_count}</b>")
+        if stuck_count:
+            lines.append(f"  ⏰ Зависших        <b>{stuck_count}</b> ⚠️")
+        lines.append(f"  ✅ Сделок всего    <b>{trades_done}</b>")
     else:
         lines.append("⏹ <b>Остановлен</b>")
+
+    # ── Разделитель ───────────────────────────────────────────────────────────
+    lines.append("")
+    lines.append("──────────────────────")
+    lines.append("")
+
+    # ── Конфигурация ──────────────────────────────────────────────────────────
+    main_str = f"<code>{main_account}</code>" if main_account else "<i>не задан</i>"
+    lines.append(f"👤 Основной аккаунт: {main_str}")
+
+    if pets:
+        for _, pid, min_count in pets:
+            short   = pid if len(pid) <= 28 else pid[:25] + "…"
+            min_str = f"  <i>(мин: {min_count})</i>" if min_count > 1 else ""
+            lines.append(f"  🦆 <code>{short}</code>{min_str}")
+    else:
+        lines.append("  🦆 <i>Петы не заданы</i>")
+
+    lines.append("")
+    trade_str = f"<code>{config_id}</code>"      if config_id      else "<i>не задан</i>"
+    farm_str  = f"<code>{farm_config_id}</code>" if farm_config_id else "<i>не задан</i>"
+    lines.append(f"🔄 Трейд конфиг: {trade_str}")
+    lines.append(f"🌾 Фарм конфиг:  {farm_str}")
+    lines.append("")
+    lines.append(f"⏱ Проверка: <b>{check_interval}с</b>  ·  ⏰ Стак: <b>{stuck_timeout}м</b>  ·  📊 Лимит: <b>{batch_size}</b>")
 
     return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, farm_config_id, running, check_interval, stuck_timeout, batch_size)
 
