@@ -586,22 +586,6 @@ async def ap_start(callback: CallbackQuery):
         )
         return
 
-    # Apply farm config BEFORE disable so AccountsOps accepts the change.
-    # Then disable→enable acts as restart to pick it up.
-    if farm_config_id:
-        await callback.message.edit_text(
-            "🤖 <b>Авто-пилот</b>\n\n⏳ Применяю фарм конфиг...",
-            parse_mode="HTML",
-        )
-        await set_accounts_enabled(ao_key, [u for _, u in farm_accounts], True)
-        await set_accounts_config(ao_key, [u for _, u in farm_accounts], farm_config_id)
-
-    await callback.message.edit_text(
-        "🤖 <b>Авто-пилот</b>\n\n⏳ Перезапускаю аккаунты...",
-        parse_mode="HTML",
-    )
-    await set_accounts_enabled(ao_key, all_usernames, False)
-
     ok_main, _, err_main = await set_accounts_enabled(ao_key, [cfg["main_account"]], True)
     if not ok_main:
         await callback.message.edit_text(
@@ -611,13 +595,81 @@ async def ap_start(callback: CallbackQuery):
         )
         return
 
-    await set_accounts_enabled(ao_key, [u for _, u in farm_accounts], True)
-
     clear_autopilot_queue(user_id)
     add_autopilot_queue(user_id, farm_accounts, status='farming')
     set_autopilot_started_at(user_id)
     set_autopilot_running(user_id, True)
     add_autopilot_event(user_id, "started")
+
+    await _show_autopilot(callback.message, user_id, edit=True)
+
+
+# ─── Перезапуск всех аккаунтов ───────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_restart_all")
+async def ap_restart_all(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    ao_key  = get_panel(user_id)
+    if not ao_key:
+        await callback.answer("❌ AccountsOps не подключён.", show_alert=True)
+        return
+
+    cfg = get_autopilot_config(user_id)
+    if not cfg or not cfg["main_account"]:
+        await callback.answer("❌ Задай основной аккаунт.", show_alert=True)
+        return
+
+    await callback.answer("⏳ Перезапускаю...")
+    farm_config_id = cfg.get("farm_config_id")
+
+    await callback.message.edit_text(
+        "🤖 <b>Авто-пилот</b>\n\n⏳ Получаю список аккаунтов...",
+        parse_mode="HTML",
+    )
+
+    ok_all, all_accounts, _ = await get_trackstats_accounts(ao_key)
+    if not ok_all or not all_accounts:
+        await _show_autopilot(callback.message, user_id, edit=True)
+        return
+
+    face_set, dead_set = await asyncio.gather(
+        get_usernames_by_tag(ao_key, "status:face"),
+        get_usernames_by_tag(ao_key, "status:dead"),
+    )
+
+    main_lower    = cfg["main_account"].lower()
+    farm_usernames = []
+    all_usernames  = []
+    for acc in all_accounts:
+        username = acc.get("username") or acc.get("name", "")
+        if not username:
+            continue
+        all_usernames.append(username)
+        u = username.lower()
+        if u == main_lower or u in face_set or u in dead_set:
+            continue
+        farm_usernames.append(username)
+
+    if farm_config_id and farm_usernames:
+        await callback.message.edit_text(
+            "🤖 <b>Авто-пилот</b>\n\n⏳ Применяю фарм конфиг...",
+            parse_mode="HTML",
+        )
+        await set_accounts_config(ao_key, farm_usernames, farm_config_id)
+
+    await callback.message.edit_text(
+        f"🤖 <b>Авто-пилот</b>\n\n⏳ Выключаю {len(all_usernames)} аккаунтов...",
+        parse_mode="HTML",
+    )
+    await set_accounts_enabled(ao_key, all_usernames, False)
+
+    await callback.message.edit_text(
+        "🤖 <b>Авто-пилот</b>\n\n⏳ Включаю основной + фарм аккаунты...",
+        parse_mode="HTML",
+    )
+    await set_accounts_enabled(ao_key, [cfg["main_account"]], True)
+    if farm_usernames:
+        await set_accounts_enabled(ao_key, farm_usernames, True)
 
     await _show_autopilot(callback.message, user_id, edit=True)
 
