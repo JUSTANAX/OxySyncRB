@@ -667,27 +667,26 @@ async def _build_inventory_text(user_id: int) -> str:
     if not pets:
         return f"📦 <b>Инвентарь: {main}</b>\n\n<i>Инвентарь пуст</i>"
 
-    # Aggregate: (tier, name) -> [age, age, ...]
+    # Aggregate by (tier, name, age) — different ages are separate lines
     from collections import defaultdict
-    agg: dict[tuple, list] = defaultdict(list)
+    agg: dict[tuple, int] = defaultdict(int)
     for pet in pets:
         tier = _pet_tier(pet)
         name = _pet_display_name(pet)
         qty  = pet.get("quantity", 1) or 1
         age  = _pet_age(pet)
-        agg[(tier, name)].extend([age] * qty)
+        agg[(tier, name, age)] += qty
 
     def _render_group(tier: str, emoji: str, label: str) -> list[str]:
-        items = [(name, ages) for (t, name), ages in agg.items() if t == tier]
+        items = [(name, age, cnt) for (t, name, age), cnt in agg.items() if t == tier]
         if not items:
             return []
-        items.sort(key=lambda x: (-len(x[1]), x[0]))
+        items.sort(key=lambda x: (-x[2], x[0], x[1] or 0))
         result = [f"{emoji} <b>{label}</b>"]
-        for name, ages in items:
-            cnt      = len(ages)
-            known    = sorted(a for a in ages if a is not None)
-            age_str  = " " + "·".join(str(a) for a in known) if known else ""
-            result.append(f"  • {name} ×{cnt}{age_str}")
+        for name, age, cnt in items:
+            qty_str = f" ×{cnt}" if cnt > 1 else ""
+            age_str = f"  {age}" if age is not None else ""
+            result.append(f"  • {name}{qty_str}{age_str}")
         return result
 
     lines = [f"📦 <b>Инвентарь: <code>{main}</code></b>", ""]
@@ -699,7 +698,7 @@ async def _build_inventory_text(user_id: int) -> str:
             lines.extend(part)
             lines.append("")
 
-    total = sum(len(ages) for ages in agg.values())
+    total = sum(agg.values())
     lines.append(f"<i>Всего: {total} питомцев</i>")
     return "\n".join(lines)
 
