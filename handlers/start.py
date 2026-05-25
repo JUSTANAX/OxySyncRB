@@ -107,29 +107,47 @@ def _parse_dt(s: str) -> datetime:
     raise ValueError(s)
 
 
+def _remaining_str(mins: int) -> str:
+    if mins <= 0:
+        return "0м"
+    if mins < 60:
+        return f"{mins}м"
+    h, m = divmod(mins, 60)
+    if h < 24:
+        return f"{h}ч {m}м" if m else f"{h}ч"
+    d, hh = divmod(h, 24)
+    return f"{d}д {hh}ч" if hh else f"{d}д"
+
+
 def _get_period_diff(user_id: int, current: dict, period_hours: int) -> dict:
-    baseline = get_period_baseline(user_id, period_hours)
+    full_mins = period_hours * 60
+    baseline  = get_period_baseline(user_id, period_hours)
     if baseline is None:
         save_period_baseline(user_id, period_hours, current["money"], current["potions"])
-        return {"money": 0, "potions": 0}
+        return {"money": 0, "potions": 0, "remaining": _remaining_str(full_mins)}
     try:
         elapsed_h = (datetime.utcnow() - _parse_dt(baseline["started_at"])).total_seconds() / 3600
     except Exception:
         elapsed_h = 0
     if elapsed_h >= period_hours:
         save_period_baseline(user_id, period_hours, current["money"], current["potions"])
-        return {"money": 0, "potions": 0}
+        return {"money": 0, "potions": 0, "remaining": _remaining_str(full_mins)}
+    remaining = _remaining_str(int((period_hours - elapsed_h) * 60))
     return {
-        "money":   max(0, current["money"]   - (baseline.get("money")   or 0)),
-        "potions": max(0, current["potions"] - (baseline.get("potions") or 0)),
+        "money":     max(0, current["money"]   - (baseline.get("money")   or 0)),
+        "potions":   max(0, current["potions"] - (baseline.get("potions") or 0)),
+        "remaining": remaining,
     }
 
 
 def _diff_row(diffs: dict, key: str, period_slice) -> str:
-    return "  ·  ".join(
-        f"{lbl} {_fmt_diff(diffs.get(lbl), key)}"
-        for _, lbl in period_slice
-    )
+    parts = []
+    for _, lbl in period_slice:
+        d   = diffs.get(lbl) or {}
+        rem = d.get("remaining", "")
+        val = _fmt_diff(d or None, key)
+        parts.append(f"{lbl} [{rem}] {val}" if rem else f"{lbl} {val}")
+    return "  ·  ".join(parts)
 
 
 def _append_totals(lines: list, user_id: int, ok_t: bool, totals: dict):
