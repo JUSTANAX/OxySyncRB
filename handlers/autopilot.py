@@ -66,6 +66,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     stuck_timeout  = cfg["stuck_timeout"]  if cfg else 10
     batch_size     = cfg["batch_size"]     if cfg else 10
     trades_done    = cfg["trades_done"]    if cfg else 0
+    ready_count    = cfg.get("ready_count", 0) if cfg else 0
     started_at     = cfg["started_at"]     if cfg else None
     pets           = get_autopilot_pets(user_id)
     pet_count      = len(pets)
@@ -83,6 +84,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
         lines.append(f"▶️ <b>Работает</b>{rt_part}")
         lines.append("")
         lines.append(f"  🌾 Фармит         <b>{farming_count}</b>")
+        lines.append(f"  🦆 Нашли пета     <b>{ready_count}</b>")
         lines.append(f"  🔄 Трейдит         <b>{trading_count}</b>")
         if stuck_count:
             lines.append(f"  ⏰ Зависших        <b>{stuck_count}</b> ⚠️")

@@ -26,6 +26,7 @@ from database import (
     set_autopilot_entry_status,
     get_autopilot_pets,
     add_autopilot_event,
+    save_autopilot_ready_count,
 )
 from handlers import start
 from handlers import faceunlock
@@ -278,11 +279,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             logging.error("Stuck notify user=%s: %s", user_id, e)
 
     # Check farming accounts — group by pet kind, respect per-pet thresholds
-    current_trading = get_autopilot_trading_count(user_id)
-    if current_trading >= max_traders_per_server:
-        return
-
-    # pet_kind -> [(entry_id, acc_id, username), ...]
+    # Always scan so ready_count stays current even when at capacity
     ready_by_pet: dict[str, list] = {}
     for entry_id, acc_id, username in get_autopilot_farming_entries(user_id):
         ok, pets, _ = await get_account_pets(ao_key, acc_id)
@@ -293,6 +290,12 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             if kind in pet_ids_set:
                 ready_by_pet.setdefault(kind, []).append((entry_id, acc_id, username))
                 break
+
+    save_autopilot_ready_count(user_id, sum(len(v) for v in ready_by_pet.values()))
+
+    current_trading = get_autopilot_trading_count(user_id)
+    if current_trading >= max_traders_per_server:
+        return
 
     promoted: set[int] = set()
     for pet_kind, ready_accounts in ready_by_pet.items():
@@ -366,9 +369,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.7.5 запущен ✅")
+    print("OxySync Bot v1.7.6 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.7.5</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.7.6</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

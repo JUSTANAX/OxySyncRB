@@ -291,7 +291,12 @@ def get_autopilot_config(user_id: int) -> dict | None:
         "farm_config_id":         row.get("farm_config_id"),
         "trades_done":            row.get("trades_done") or 0,
         "max_traders_per_server": row.get("max_traders_per_server") or 10,
+        "ready_count":            row.get("ready_count") or 0,
     }
+
+
+def save_autopilot_ready_count(user_id: int, count: int):
+    _upsert_config(user_id, {"ready_count": count})
 
 
 def save_autopilot_main(user_id: int, main_account: str):
