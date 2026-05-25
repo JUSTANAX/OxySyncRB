@@ -561,6 +561,15 @@ async def get_account_folders(api_key: str) -> tuple[bool, list, str]:
     return True, [], ""
 
 
+async def get_folder_accounts(api_key: str, folder_id: int) -> tuple[bool, list, str]:
+    ok, data, err = await _get(api_key, f"/api/account-folders/{folder_id}/accounts")
+    if not ok:
+        return False, [], err
+    if isinstance(data, list):
+        return True, data, ""
+    return True, [], ""
+
+
 async def _put_2xx(api_key: str, endpoint: str, body: dict) -> tuple[bool, any, str]:
     """Like _put but accepts any 2xx status (e.g. 204 No Content)."""
     headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}

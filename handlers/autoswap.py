@@ -6,6 +6,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 from api.accountsops import (
     get_account_folders,
+    get_folder_accounts,
     get_all_accounts,
     get_usernames_by_tag,
     move_accounts_to_folder,
@@ -107,17 +108,41 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
     moves live accounts to section=input and dead to section=output.
     Returns {devices, live, dead, created_folders}.
     """
-    (ok_acc, all_accounts, _), (ok_fld, existing_folders, _), dead_set = await asyncio.gather(
+    (ok_acc, unfoldered, _), (ok_fld, existing_folders, _), dead_set = await asyncio.gather(
         get_all_accounts(ao_key),
         get_account_folders(ao_key),
         get_usernames_by_tag(ao_key, "status:dead"),
     )
 
-    if not ok_acc or not all_accounts:
+    existing_folders = existing_folders if ok_fld else []
+
+    # collect accounts already in folders (parallel)
+    foldered: list = []
+    if existing_folders:
+        results = await asyncio.gather(
+            *[get_folder_accounts(ao_key, f["id"]) for f in existing_folders],
+            return_exceptions=True,
+        )
+        for r in results:
+            if not isinstance(r, BaseException):
+                ok, accs, _ = r
+                if ok:
+                    foldered.extend(accs)
+
+    # merge unfoldered + foldered, deduplicate by username
+    seen: set[str] = set()
+    all_accounts: list = []
+    for acc in (unfoldered if ok_acc else []) + foldered:
+        u = (acc.get("username") or acc.get("name") or "").strip().lower()
+        if u and u not in seen:
+            seen.add(u)
+            all_accounts.append(acc)
+
+    if not all_accounts:
         return {"devices": 0, "live": 0, "dead": 0, "created": 0}
 
     # existing folders: name → id
-    folder_map: dict[str, int] = {f["name"]: f["id"] for f in (existing_folders if ok_fld else [])}
+    folder_map: dict[str, int] = {f["name"]: f["id"] for f in existing_folders}
 
     # group by device_id; accounts without a device go to a dedicated bucket
     NO_DEVICE_KEY = "No Device"
