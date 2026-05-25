@@ -299,19 +299,36 @@ def set_autopilot_started_at(user_id: int):
     _upsert_config(user_id, {"started_at": _now_iso()})
 
 
-def get_autopilot_pets(user_id: int) -> list[tuple[int, str]]:
+def get_autopilot_pets(user_id: int) -> list[tuple[int, str, int]]:
     c = _get_client()
-    result = c.table("autopilot_pets").select("id, pet_id").eq("user_id", user_id).order("id").execute()
-    return [(r["id"], r["pet_id"]) for r in result.data]
+    result = c.table("autopilot_pets").select("id, pet_id, min_count").eq("user_id", user_id).order("id").execute()
+    return [(r["id"], r["pet_id"], r.get("min_count") or 1) for r in result.data]
 
 
-def add_autopilot_pet(user_id: int, pet_id: str) -> bool:
+def add_autopilot_pet(user_id: int, pet_id: str, min_count: int = 1) -> bool:
     c = _get_client()
     existing = c.table("autopilot_pets").select("id").eq("user_id", user_id).eq("pet_id", pet_id).execute()
     if existing.data:
         return False
-    c.table("autopilot_pets").insert({"user_id": user_id, "pet_id": pet_id}).execute()
+    c.table("autopilot_pets").insert({"user_id": user_id, "pet_id": pet_id, "min_count": min_count}).execute()
     return True
+
+
+def add_autopilot_pets_bulk(user_id: int, pet_ids: list[str]) -> tuple[int, int]:
+    """Returns (added, skipped)."""
+    c = _get_client()
+    existing_rows = c.table("autopilot_pets").select("pet_id").eq("user_id", user_id).execute()
+    existing_set = {r["pet_id"] for r in existing_rows.data}
+    new_ids = [pid for pid in pet_ids if pid and pid not in existing_set]
+    if new_ids:
+        records = [{"user_id": user_id, "pet_id": pid, "min_count": 1} for pid in new_ids]
+        c.table("autopilot_pets").insert(records).execute()
+    return len(new_ids), len(pet_ids) - len(new_ids)
+
+
+def update_autopilot_pet_min_count(row_id: int, min_count: int):
+    c = _get_client()
+    c.table("autopilot_pets").update({"min_count": min_count}).eq("id", row_id).execute()
 
 
 def remove_autopilot_pet(row_id: int):

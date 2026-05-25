@@ -17,7 +17,8 @@ from database import (
     increment_autopilot_trades_done, get_autopilot_trades_done,
     add_autopilot_queue, clear_autopilot_queue,
     set_autopilot_entry_status,
-    get_autopilot_pets, add_autopilot_pet, remove_autopilot_pet,
+    get_autopilot_pets, add_autopilot_pet, add_autopilot_pets_bulk,
+    update_autopilot_pet_min_count, remove_autopilot_pet,
     add_autopilot_event,
 )
 from keyboards import autopilot_kb, ap_pets_kb, cancel_to_ap_kb, configs_kb, farm_configs_kb
@@ -28,6 +29,8 @@ router = Router()
 class APStates(StatesGroup):
     waiting_main_account   = State()
     waiting_pet_id         = State()
+    waiting_pet_bulk       = State()
+    waiting_pet_threshold  = State()
     waiting_check_interval = State()
     waiting_stuck_timeout  = State()
     waiting_batch_size     = State()
@@ -51,8 +54,9 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     farm_cfg_str   = f"<code>{farm_config_id}</code>" if farm_config_id else "<i>не задан</i>"
     lines.append(f"👤 Аккаунт: {main_str}")
     if pets:
-        for _, pid in pets:
-            lines.append(f"🦆 <code>{pid}</code>")
+        for _, pid, min_count in pets:
+            min_str = f" (мин: {min_count})" if min_count > 1 else ""
+            lines.append(f"🦆 <code>{pid}</code>{min_str}")
     else:
         lines.append("🦆 Петы: <i>не заданы</i>")
     lines.append(f"🔄 Трейд конфиг: {trade_cfg_str}")
@@ -350,10 +354,13 @@ def _pets_page_text(user_id: int) -> tuple[str, any]:
     pets = get_autopilot_pets(user_id)
     lines = ["🦆 <b>Петы авто-пилота</b>", ""]
     if pets:
-        for _, pid in pets:
-            lines.append(f"• <code>{pid}</code>")
+        for _, pid, min_count in pets:
+            min_str = f"  📊 мин: <b>{min_count}</b>" if min_count > 1 else ""
+            lines.append(f"• <code>{pid}</code>{min_str}")
     else:
         lines.append("<i>Нет добавленных петов</i>")
+    lines.append("")
+    lines.append("<i>📊 — минимум аккаунтов с этим петом для перевода в трейд</i>")
     return "\n".join(lines), ap_pets_kb(pets)
 
 
@@ -404,6 +411,101 @@ async def ap_receive_pet(message: Message, state: FSMContext, bot: Bot):
         except TelegramBadRequest:
             pass
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(lambda c: c.data == "ap_bulk_pet")
+async def ap_bulk_pet(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(APStates.waiting_pet_bulk)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
+    await callback.message.edit_text(
+        "📋 <b>Bulk-добавление петов</b>\n\n"
+        "Отправь несколько ID — каждый с новой строки:\n\n"
+        "<code>soggy_spring_2026_unicorn\n"
+        "dragon_fire_2025\n"
+        "cat_rainbow_2026</code>",
+        parse_mode="HTML",
+        reply_markup=cancel_to_ap_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(APStates.waiting_pet_bulk)
+async def ap_receive_bulk(message: Message, state: FSMContext, bot: Bot):
+    if not message.text:
+        return
+    await message.delete()
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    raw_ids = [line.strip() for line in message.text.splitlines()]
+    pet_ids = [pid for pid in raw_ids if pid]
+    if not pet_ids:
+        await message.answer("❌ Не найдено ни одного ID:", reply_markup=cancel_to_ap_kb())
+        return
+    added, skipped = add_autopilot_pets_bulk(message.from_user.id, pet_ids)
+    await state.clear()
+    notice = f"✅ Добавлено: <b>{added}</b>"
+    if skipped:
+        notice += f"  ·  ⚠️ Уже было: <b>{skipped}</b>"
+    await message.answer(notice, parse_mode="HTML")
+    text, kb = _pets_page_text(message.from_user.id)
+    if prompt_msg_id:
+        try:
+            await bot.edit_message_text(
+                text, chat_id=message.chat.id, message_id=prompt_msg_id,
+                parse_mode="HTML", reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            pass
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(lambda c: c.data.startswith("ap_pet_threshold:"))
+async def ap_pet_threshold(callback: CallbackQuery, state: FSMContext):
+    try:
+        row_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    await state.set_state(APStates.waiting_pet_threshold)
+    await state.update_data(prompt_msg_id=callback.message.message_id, pet_row_id=row_id)
+    await callback.message.edit_text(
+        "📊 <b>Минимальный порог для трейда</b>\n\n"
+        "Введи число аккаунтов, у которых должен быть этот пет, "
+        "прежде чем они перейдут в трейд:\n\n"
+        "<i>• <code>1</code> — трейдить сразу как появится\n"
+        "• <code>5</code> — ждать пока 5 аккаунтов накопят пета</i>",
+        parse_mode="HTML",
+        reply_markup=cancel_to_ap_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(APStates.waiting_pet_threshold)
+async def ap_receive_threshold(message: Message, state: FSMContext, bot: Bot):
+    if not message.text:
+        return
+    text = message.text.strip()
+    await message.delete()
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    pet_row_id = data.get("pet_row_id")
+    if not text.isdigit() or not (1 <= int(text) <= 500):
+        await message.answer("❌ Введи число от 1 до 500:", reply_markup=cancel_to_ap_kb())
+        return
+    update_autopilot_pet_min_count(pet_row_id, int(text))
+    await state.clear()
+    page_text, kb = _pets_page_text(message.from_user.id)
+    if prompt_msg_id:
+        try:
+            await bot.edit_message_text(
+                page_text, chat_id=message.chat.id, message_id=prompt_msg_id,
+                parse_mode="HTML", reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            pass
+    await message.answer(page_text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.callback_query(lambda c: c.data.startswith("ap_del_pet:"))

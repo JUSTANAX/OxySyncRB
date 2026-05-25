@@ -218,7 +218,9 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         set_autopilot_running(user_id, False)
         return
 
-    pet_ids_set     = {pid for _, pid in pet_rows}
+    # pet_rows = (id, pet_id, min_count)
+    pet_thresholds  = {pid: min_count for _, pid, min_count in pet_rows}
+    pet_ids_set     = set(pet_thresholds.keys())
     trade_config_id = cfg.get("config_id")
     farm_config_id  = cfg.get("farm_config_id")
     max_traders_per_server = cfg.get("max_traders_per_server") or 10
@@ -260,21 +262,38 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         except Exception as e:
             logging.error("Stuck notify user=%s: %s", user_id, e)
 
-    # Check farming accounts — did they get the pet?
+    # Check farming accounts — group by pet kind, respect per-pet thresholds
     current_trading = get_autopilot_trading_count(user_id)
+    if current_trading >= max_traders_per_server:
+        return
+
+    # pet_kind -> [(entry_id, acc_id, username), ...]
+    ready_by_pet: dict[str, list] = {}
     for entry_id, acc_id, username in get_autopilot_farming_entries(user_id):
-        if current_trading >= max_traders_per_server:
-            break
         ok, pets, _ = await get_account_pets(ao_key, acc_id)
         if not ok:
             continue
-        if any(p.get("pet_kind") in pet_ids_set for p in pets):
+        for p in pets:
+            kind = p.get("pet_kind")
+            if kind in pet_ids_set:
+                ready_by_pet.setdefault(kind, []).append((entry_id, acc_id, username))
+                break
+
+    promoted: set[int] = set()
+    for pet_kind, ready_accounts in ready_by_pet.items():
+        threshold = pet_thresholds.get(pet_kind, 1)
+        if len(ready_accounts) < threshold:
+            continue
+        for entry_id, acc_id, username in ready_accounts:
+            if entry_id in promoted or current_trading >= max_traders_per_server:
+                break
             if trade_config_id:
                 await set_accounts_config(ao_key, [username], trade_config_id)
             await set_accounts_enabled(ao_key, [username], False)
             await set_accounts_enabled(ao_key, [username], True)
             set_autopilot_entry_status(entry_id, "trading")
             add_autopilot_event(user_id, "got_pet", username)
+            promoted.add(entry_id)
             current_trading += 1
 
 
@@ -332,9 +351,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.6.0 запущен ✅")
+    print("OxySync Bot v1.6.1 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.6.0</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.6.1</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

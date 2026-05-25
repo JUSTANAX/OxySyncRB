@@ -49,13 +49,17 @@ def automation_kb() -> InlineKeyboardMarkup:
 
 def ap_pets_kb(pets: list[tuple]) -> InlineKeyboardMarkup:
     rows = []
-    for row_id, pet_id in pets:
-        short = pet_id if len(pet_id) <= 30 else pet_id[:27] + "..."
+    for row_id, pet_id, min_count in pets:
+        short = pet_id if len(pet_id) <= 22 else pet_id[:19] + "..."
         rows.append([
             InlineKeyboardButton(text=f"🦆 {short}", callback_data="noop"),
+            InlineKeyboardButton(text=f"📊 {min_count}", callback_data=f"ap_pet_threshold:{row_id}"),
             InlineKeyboardButton(text="❌", callback_data=f"ap_del_pet:{row_id}"),
         ])
-    rows.append([InlineKeyboardButton(text="➕ Добавить пет", callback_data="ap_add_pet")])
+    rows.append([
+        InlineKeyboardButton(text="➕ Добавить", callback_data="ap_add_pet"),
+        InlineKeyboardButton(text="📋 Bulk", callback_data="ap_bulk_pet"),
+    ])
     rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="autopilot")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
