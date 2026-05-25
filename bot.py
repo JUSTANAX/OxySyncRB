@@ -25,6 +25,7 @@ from database import (
     get_autopilot_stuck_entries,
     set_autopilot_entry_status,
     get_autopilot_pets,
+    add_autopilot_event,
 )
 from handlers import start
 from handlers import faceunlock
@@ -234,6 +235,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             await set_accounts_enabled(ao_key, [username], True)
             set_autopilot_entry_status(entry_id, "farming")
             increment_autopilot_trades_done(user_id)
+            add_autopilot_event(user_id, "trade_complete", username)
 
     # Check stuck trading accounts — return to farming
     stuck_timeout = cfg.get("stuck_timeout") or 10
@@ -246,6 +248,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             await set_accounts_enabled(ao_key, [username], False)
             await set_accounts_enabled(ao_key, [username], True)
             set_autopilot_entry_status(entry_id, "farming")
+            add_autopilot_event(user_id, "stuck", username)
         try:
             lines = [f"⏰ <b>Авто-пилот</b> — зависшие аккаунты возвращены в фарм\n"]
             lines.append(f"Без передачи пета >{stuck_timeout} мин: <b>{len(stuck_usernames)}</b>")
@@ -271,6 +274,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             await set_accounts_enabled(ao_key, [username], False)
             await set_accounts_enabled(ao_key, [username], True)
             set_autopilot_entry_status(entry_id, "trading")
+            add_autopilot_event(user_id, "got_pet", username)
             current_trading += 1
 
 
@@ -328,9 +332,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.5.8 запущен ✅")
+    print("OxySync Bot v1.5.9 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.5.8</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.5.9</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

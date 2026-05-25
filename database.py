@@ -433,3 +433,15 @@ def set_autopilot_entry_status(entry_id: int, status: str):
         c.table("autopilot_queue").update({"status": status, "activated_at": _now_iso()}).eq("id", entry_id).execute()
     else:
         c.table("autopilot_queue").update({"status": status}).eq("id", entry_id).execute()
+
+
+# ─── Autopilot events ─────────────────────────────────────────────────────────
+
+def add_autopilot_event(user_id: int, event_type: str, username: str | None = None):
+    c = _get_client()
+    c.table("autopilot_events").insert({
+        "user_id": user_id,
+        "event_type": event_type,
+        "username": username,
+        "created_at": _now_iso(),
+    }).execute()

@@ -18,6 +18,7 @@ from database import (
     add_autopilot_queue, clear_autopilot_queue,
     set_autopilot_entry_status,
     get_autopilot_pets, add_autopilot_pet, remove_autopilot_pet,
+    add_autopilot_event,
 )
 from keyboards import autopilot_kb, ap_pets_kb, cancel_to_ap_kb, configs_kb, farm_configs_kb
 
@@ -514,6 +515,7 @@ async def ap_start(callback: CallbackQuery):
     add_autopilot_queue(user_id, farm_accounts, status='farming')
     set_autopilot_started_at(user_id)
     set_autopilot_running(user_id, True)
+    add_autopilot_event(user_id, "started")
 
     await _show_autopilot(callback.message, user_id, edit=True)
 
@@ -539,5 +541,6 @@ async def ap_stop(callback: CallbackQuery):
 
     clear_autopilot_queue(user_id)
     set_autopilot_running(user_id, False)
+    add_autopilot_event(user_id, "stopped")
     await _show_autopilot(callback.message, user_id, edit=True)
 
