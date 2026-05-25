@@ -223,7 +223,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     pet_ids_set     = set(pet_thresholds.keys())
     trade_config_id = cfg.get("config_id")
     farm_config_id  = cfg.get("farm_config_id")
-    max_traders_per_server = cfg.get("max_traders_per_server") or 10
+    max_traders_per_server = cfg.get("batch_size") or 10
 
     # Get live active accounts from dashboard — used to filter stuck detection
     ok_d, dash, _ = await get_dashboard(ao_key)
@@ -366,9 +366,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.7.4 запущен ✅")
+    print("OxySync Bot v1.7.5 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.7.4</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.7.5</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
