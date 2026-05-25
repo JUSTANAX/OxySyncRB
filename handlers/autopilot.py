@@ -837,14 +837,14 @@ async def ap_stop(callback: CallbackQuery):
     await callback.answer("⏹ Останавливаю...")
 
     if ao_key:
-        farming = get_autopilot_farming_entries(user_id)
+        cfg     = get_autopilot_config(user_id)
         trading = get_autopilot_trading_entries(user_id)
-        all_active = farming + trading
-        if all_active:
-            await set_accounts_enabled(ao_key, [u for _, _, u in all_active], False)
-        cfg = get_autopilot_config(user_id)
-        if cfg and cfg["main_account"]:
-            await set_accounts_enabled(ao_key, [cfg["main_account"]], False)
+        if trading:
+            farm_config_id = cfg.get("farm_config_id") if cfg else None
+            usernames = [u for _, _, u in trading]
+            if farm_config_id:
+                await set_accounts_config(ao_key, usernames, farm_config_id)
+            await restart_accounts(ao_key, usernames)
 
     clear_autopilot_queue(user_id)
     set_autopilot_running(user_id, False)
