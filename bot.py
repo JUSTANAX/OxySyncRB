@@ -301,7 +301,6 @@ async def autopilot_transfer_loop(bot: Bot):
 
 
 async def main():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     init_db()
     if ACCOUNTSOPS_KEY:
         save_panel(OWNER_ID, ACCOUNTSOPS_KEY)
