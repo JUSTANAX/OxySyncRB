@@ -7,35 +7,16 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 
-from api.accountsops import get_dashboard, get_all_pets, filter_pets
+from api.accountsops import get_dashboard, get_totals
 from api.faceunlock import get_balance
 from database import (
     get_panel, save_panel,
     get_alert, set_alert, toggle_alert,
-    save_pet_snapshot, get_pets_farmed,
+    save_totals_snapshot, get_totals_diff,
     get_zp_key,
 )
 from keyboards import stats_kb, settings_kb, alerts_kb, cancel_kb
 from state_cache import save_stats_msg, clear_stats_msg
-
-WATCHED_PETS = [
-    "basic_egg_2022_alicorn",
-    "basic_egg_2022_ancient_dragon",
-    "basic_egg_2022_dragonfly",
-    "pet_progression_2026_purrowl",
-    "unicorn",
-    "dragon",
-    "admin_abuse_egg_2026_egg",
-    "diamond_griffin",
-    "food_pets_2026_dragonfruit_fox",
-    "golden_unicorn",
-    "pet_recycler_2025_emberlight",
-    "golden_dragon",
-    "penguins_2025_dango_penguins",
-    "admin_abuse_2025_sushi_penguin",
-    "diamond_dragon",
-    "soggy_spring_2026_strawberry_shortcake_ducky",
-]
 
 PERIODS = [
     (1,   "1ч"),
@@ -103,44 +84,33 @@ async def receive_key(message: Message, state: FSMContext):
 
 # ─── Построение статистики ────────────────────────────────────────────────────
 
-def _append_pets(lines: list, user_id: int, ok_p: bool, all_pets: dict, watched_filters: list[str]):
-    if not watched_filters:
-        return
+def _fmt_num(val: int) -> str:
+    return f"{val:,}".replace(",", " ")
+
+
+def _fmt_diff(d: dict | None, key: str) -> str:
+    if d is None:
+        return "—"
+    v = d.get(key, 0)
+    return f"+{_fmt_num(v)}" if v > 0 else ("0" if v == 0 else _fmt_num(v))
+
+
+def _append_totals(lines: list, user_id: int, ok_t: bool, totals: dict):
     lines.append("")
-    if not ok_p:
-        lines.append("  🐾 <b>Петы</b>: ❌ ошибка загрузки")
+    if not ok_t:
+        lines.append("  💰 <b>Деньги / Зелья</b>: ❌ ошибка загрузки")
         return
-    if not all_pets:
-        lines.append("  🐾 <b>Петы</b>: нет данных (trackstats пуст)")
+    if not totals:
         return
-    save_pet_snapshot(user_id, all_pets)
-    watched_set = {f.lower() for f in watched_filters}
-    display = {k: v for k, v in all_pets.items() if k.lower() in watched_set}
-    if not display:
-        lines.append(f"  🐾 <b>Петы</b>: 0/{len(all_pets)} совпадений по ID")
-        return
-    period_diffs = {label: get_pets_farmed(user_id, display, hours) for hours, label in PERIODS}
-    unicorns = {**filter_pets(display, "unicorn"), **filter_pets(display, "alicorn")}
-    dragons  = filter_pets(display, "dragon", exclude="dragonfly")
-    shown    = set(unicorns) | set(dragons)
-    others   = {k: v for k, v in display.items() if k not in shown}
-    pet_lines = []
-    for emoji, category in [("🦄", unicorns), ("🐉", dragons), ("🐾", others)]:
-        if not category:
-            continue
-        for kind, data in sorted(category.items(), key=lambda x: -x[1]["quantity"]):
-            egg = " 🥚" if data["is_egg"] else ""
-            pet_lines.append(f"  {emoji} {data['name']}{egg} × {data['quantity']}")
-            parts = []
-            for _, label in PERIODS:
-                diffs = period_diffs.get(label)
-                parts.append(f"{label}: {'—' if diffs is None else f'+{diffs.get(kind, 0)}'}")
-            pet_lines.append("    " + "  ·  ".join(parts))
-    lines.append(f"  🐾 <b>Петы</b> ({len(display)} отслеж. · {len(all_pets)} всего видов)")
-    if pet_lines:
-        lines.extend(pet_lines)
-    else:
-        lines.append("    (нет питомцев в аккаунтах)")
+    save_totals_snapshot(user_id, totals["money"], totals["potions"])
+    diffs = {label: get_totals_diff(user_id, totals, hours) for hours, label in PERIODS}
+    lines.append(f"  <i>{'  ·  '.join(lbl for _, lbl in PERIODS)}</i>")
+    money_parts   = "  ·  ".join(_fmt_diff(diffs.get(lbl), "money")   for _, lbl in PERIODS)
+    potions_parts = "  ·  ".join(_fmt_diff(diffs.get(lbl), "potions") for _, lbl in PERIODS)
+    lines.append(f"  💰 <b>Деньги</b>: {_fmt_num(totals['money'])}")
+    lines.append(f"    {money_parts}")
+    lines.append(f"  🧪 <b>Зелья</b>: {_fmt_num(totals['potions'])}")
+    lines.append(f"    {potions_parts}")
 
 
 def _build_lines(ok_d, dash, err_d, ok_zp, zp_bal) -> list[str]:
@@ -174,14 +144,14 @@ async def build_stats_text(user_id: int) -> str:
     results = await asyncio.gather(
         get_dashboard(api_key),
         get_balance(zp_key) if zp_key else _skip(),
-        get_all_pets(api_key),
+        get_totals(api_key),
         return_exceptions=True,
     )
-    ok_d,  dash,     err_d = results[0] if not isinstance(results[0], BaseException) else (False, {}, str(results[0]))
-    ok_zp, zp_bal,   _     = results[1] if not isinstance(results[1], BaseException) else (False, {}, "")
-    ok_p,  all_pets, _     = results[2] if not isinstance(results[2], BaseException) else (False, {}, "")
+    ok_d,  dash,   err_d = results[0] if not isinstance(results[0], BaseException) else (False, {}, str(results[0]))
+    ok_zp, zp_bal, _     = results[1] if not isinstance(results[1], BaseException) else (False, {}, "")
+    ok_t,  totals, _     = results[2] if not isinstance(results[2], BaseException) else (False, {}, "")
     lines = _build_lines(ok_d, dash, err_d, ok_zp, zp_bal)
-    _append_pets(lines, user_id, ok_p, all_pets, WATCHED_PETS)
+    _append_totals(lines, user_id, ok_t, totals)
     return "\n".join(lines)
 
 
@@ -209,7 +179,7 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
         return
 
     # ── initial load ───────────────────────────────────────────────────────────
-    loading = await msg_or_obj.answer("⏳ <b>[1/4]</b> Читаю настройки...", parse_mode="HTML")
+    loading = await msg_or_obj.answer("⏳ <b>[1/3]</b> Читаю настройки...", parse_mode="HTML")
 
     async def upd(text: str):
         try:
@@ -224,30 +194,29 @@ async def show_stats(msg_or_obj, user_id: int, edit: bool = False):
             return
         zp_key = get_zp_key(user_id)
 
-        await upd("⏳ <b>[2/4]</b> Запрос дашборда AccountsOps...")
+        await upd("⏳ <b>[2/3]</b> Запрос дашборда AccountsOps...")
         try:
             ok_d, dash, err_d = await asyncio.wait_for(get_dashboard(api_key), timeout=20.0)
         except asyncio.TimeoutError:
             ok_d, dash, err_d = False, {}, "таймаут (20 с)"
 
         zp_label = "баланс ZP..." if zp_key else "ZP ключ не задан, пропускаю..."
-        await upd(f"⏳ <b>[3/4]</b> {zp_label}")
+        await upd(f"⏳ <b>[3/3]</b> {zp_label} + деньги/зелья...")
         ok_zp, zp_bal = False, {}
-        if zp_key:
-            try:
-                ok_zp, zp_bal, _ = await asyncio.wait_for(get_balance(zp_key), timeout=20.0)
-            except asyncio.TimeoutError:
-                pass
-
-        await upd("⏳ <b>[4/4]</b> Загружаю петов...")
-        ok_p, all_pets = False, {}
+        ok_t, totals = False, {}
         try:
-            ok_p, all_pets, _ = await asyncio.wait_for(get_all_pets(api_key), timeout=90.0)
-        except asyncio.TimeoutError:
+            results = await asyncio.gather(
+                get_balance(zp_key) if zp_key else _skip(),
+                get_totals(api_key),
+                return_exceptions=True,
+            )
+            ok_zp, zp_bal, _ = results[0] if not isinstance(results[0], BaseException) else (False, {}, "")
+            ok_t, totals, _  = results[1] if not isinstance(results[1], BaseException) else (False, {}, "")
+        except Exception:
             pass
 
         lines = _build_lines(ok_d, dash, err_d, ok_zp, zp_bal)
-        _append_pets(lines, user_id, ok_p, all_pets, WATCHED_PETS)
+        _append_totals(lines, user_id, ok_t, totals)
         text = "\n".join(lines)
 
         try:

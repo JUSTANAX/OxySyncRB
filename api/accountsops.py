@@ -416,6 +416,16 @@ async def get_accounts_with_pet_details(api_key: str, pet_kind: str) -> tuple[bo
     return True, result, ""
 
 
+async def get_totals(api_key: str) -> tuple[bool, dict, str]:
+    """Sum bucks (money) and potions across all tracked accounts."""
+    ok, accounts, err = await get_trackstats_accounts(api_key)
+    if not ok:
+        return False, {}, err
+    money   = sum(int(acc.get("bucks",   0) or 0) for acc in accounts)
+    potions = sum(int(acc.get("potions", 0) or 0) for acc in accounts)
+    return True, {"money": money, "potions": potions}, ""
+
+
 def filter_pets(pets: dict, search: str, exclude: str | None = None) -> dict:
     """Return pets whose display name contains search (case-insensitive).
     Optionally exclude pets whose name contains the exclude string."""

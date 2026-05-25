@@ -219,6 +219,34 @@ def set_auto_unlock_interval(user_id: int, hours: float):
     c.table("auto_unlock").update({"interval_hours": hours}).eq("user_id", user_id).execute()
 
 
+# ─── Totals snapshots (money + potions) ──────────────────────────────────────
+
+def save_totals_snapshot(user_id: int, money: int, potions: int):
+    c = _get_client()
+    now = datetime.utcnow().replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cutoff = (datetime.utcnow() - timedelta(days=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    c.table("totals_snapshots").delete().eq("user_id", user_id).lt("recorded_at", cutoff).execute()
+    c.table("totals_snapshots").delete().eq("user_id", user_id).eq("recorded_at", now).execute()
+    c.table("totals_snapshots").insert({
+        "user_id": user_id, "money": money, "potions": potions, "recorded_at": now,
+    }).execute()
+
+
+def get_totals_diff(user_id: int, current: dict, hours: float) -> dict | None:
+    c = _get_client()
+    target = (datetime.utcnow() - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = c.table("totals_snapshots").select("money, potions") \
+        .eq("user_id", user_id).lte("recorded_at", target) \
+        .order("recorded_at", desc=True).limit(1).execute()
+    if not rows.data:
+        return None
+    past = rows.data[0]
+    return {
+        "money":   max(0, current["money"]   - (past.get("money")   or 0)),
+        "potions": max(0, current["potions"] - (past.get("potions") or 0)),
+    }
+
+
 # ─── Watched pets ────────────────────────────────────────────────────────────
 
 def get_watched_pets(user_id: int) -> list[str]:
