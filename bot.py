@@ -398,7 +398,7 @@ async def run_autoswap(bot: Bot):
             cfg = get_autoswap_cfg(user_id)
             live_name = (cfg.get("live_folder_name") or cfg.get("live_folder_id")) if cfg else "?"
             dead_name = (cfg.get("dead_folder_name") or cfg.get("dead_folder_id")) if cfg else "?"
-            lines = ["🔄 <b>AutoSwap</b> — авто-сортировка выполнена", ""]
+            lines = ["📂 <b>Sorting</b> — авто-сортировка выполнена", ""]
             lines.append(f"✅ Живых → «{live_name}»: <b>{live_count}</b>")
             lines.append(f"💀 Мёртвых → «{dead_name}»: <b>{dead_count}</b>")
             await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML")

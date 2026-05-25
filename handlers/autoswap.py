@@ -35,7 +35,7 @@ def _build_autoswap_page(user_id: int) -> tuple[str, any]:
     interval_hours   = cfg["interval_hours"]   if cfg else 1.0
     last_run_at      = cfg["last_run_at"]      if cfg else None
 
-    lines = ["🔄 <b>AutoSwap — Сортировка</b>", ""]
+    lines = ["📂 <b>Sorting</b>", ""]
     lines.append("Раскидывает аккаунты по папкам:")
     lines.append("живые → папка живых,  мёртвые → папка мёртвых.")
     lines.append("")
@@ -246,14 +246,14 @@ async def as_run(callback: CallbackQuery):
 
     await callback.answer("⏳ Запускаю...")
     await callback.message.edit_text(
-        "🔄 <b>AutoSwap</b>\n\n⏳ Получаю список аккаунтов...",
+        "📂 <b>Sorting</b>\n\n⏳ Получаю список аккаунтов...",
         parse_mode="HTML",
     )
 
     live_count, dead_count = await do_sort(ao_key, user_id)
 
     cfg2 = get_autoswap_config(user_id)
-    lines = ["🔄 <b>AutoSwap — готово!</b>", ""]
+    lines = ["📂 <b>Sorting — готово!</b>", ""]
     lines.append(f"✅ Живых → «{cfg2['live_folder_name'] or cfg2['live_folder_id']}»: <b>{live_count}</b>")
     lines.append(f"💀 Мёртвых → «{cfg2['dead_folder_name'] or cfg2['dead_folder_id']}»: <b>{dead_count}</b>")
 

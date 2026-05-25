@@ -41,7 +41,7 @@ def alerts_kb(threshold: int | None, enabled: bool) -> InlineKeyboardMarkup:
 def automation_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔓 Auto-Unlock-Face", callback_data="face_unlock")],
-        [InlineKeyboardButton(text="🔄 AutoSwap",          callback_data="autoswap")],
+        [InlineKeyboardButton(text="📂 Sorting",             callback_data="autoswap")],
         [InlineKeyboardButton(text="🤖 Авто-пилот",        callback_data="autopilot")],
         [InlineKeyboardButton(text="🔙 Назад",              callback_data="back")],
     ])
