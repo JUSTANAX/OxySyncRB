@@ -225,6 +225,16 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     farm_config_id  = cfg.get("farm_config_id")
     max_traders_per_server = cfg.get("max_traders_per_server") or 10
 
+    # Get live active accounts from dashboard — used to filter stuck detection
+    ok_d, dash, _ = await get_dashboard(ao_key)
+    active_usernames: set[str] = set()
+    if ok_d:
+        active_usernames = {
+            a["username"].lower()
+            for a in dash.get("active_accounts", [])
+            if a.get("username")
+        }
+
     # Check trading accounts — did they trade the pet?
     for entry_id, acc_id, username in get_autopilot_trading_entries(user_id):
         ok, pets, _ = await get_account_pets(ao_key, acc_id)
@@ -239,9 +249,14 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             increment_autopilot_trades_done(user_id)
             add_autopilot_event(user_id, "trade_complete", username)
 
-    # Check stuck trading accounts — return to farming
+    # Check stuck trading accounts — only flag if account is confirmed active in game
+    # (filters out accounts still in queue/joining phase)
     stuck_timeout = cfg.get("stuck_timeout") or 10
-    stuck = get_autopilot_stuck_entries(user_id, stuck_timeout * 60)
+    stuck_raw = get_autopilot_stuck_entries(user_id, stuck_timeout * 60)
+    stuck = [
+        (eid, aid, u) for eid, aid, u in stuck_raw
+        if not active_usernames or u.lower() in active_usernames
+    ]
     if stuck:
         stuck_usernames = [username for _, _, username in stuck]
         for entry_id, _, username in stuck:
@@ -351,9 +366,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.7.2 запущен ✅")
+    print("OxySync Bot v1.7.3 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.7.2</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.7.3</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
