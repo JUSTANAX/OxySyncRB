@@ -677,7 +677,10 @@ async def _build_inventory_text(user_id: int) -> str:
         age  = _pet_age(pet)
         agg[(tier, name, age)] += qty
 
-    def _render_group(tier: str, emoji: str, label: str) -> list[str]:
+    TIER_EMOJI = {"mega": "🌟", "neon": "✨", "normal": "🦆"}
+
+    def _render_group(tier: str, label: str) -> list[str]:
+        emoji = TIER_EMOJI[tier]
         items = [(name, age, cnt) for (t, name, age), cnt in agg.items() if t == tier]
         if not items:
             return []
@@ -686,14 +689,14 @@ async def _build_inventory_text(user_id: int) -> str:
         for name, age, cnt in items:
             qty_str = f" ×{cnt}" if cnt > 1 else ""
             age_str = f"  {age}" if age is not None else ""
-            result.append(f"  • {name}{qty_str}{age_str}")
+            result.append(f"  {emoji} {name}{qty_str}{age_str}")
         return result
 
     lines = [f"📦 <b>Инвентарь: <code>{main}</code></b>", ""]
 
-    for part in (_render_group("mega",   "🌟", "Мега-Неон"),
-                 _render_group("neon",   "✨", "Неон"),
-                 _render_group("normal", "🦆", "Обычные")):
+    for part in (_render_group("mega",   "Мега-Неон"),
+                 _render_group("neon",   "Неон"),
+                 _render_group("normal", "Обычные")):
         if part:
             lines.extend(part)
             lines.append("")
