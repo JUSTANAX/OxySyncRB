@@ -417,27 +417,9 @@ async def get_accounts_with_pet_details(api_key: str, pet_kind: str) -> tuple[bo
 
 
 def _pet_tier(pet: dict) -> str:
-    # Boolean flags
-    if pet.get("is_mega_neon") or pet.get("mega_neon"):
+    if pet.get("is_mega"):
         return "mega"
-    if pet.get("is_neon") or pet.get("neon"):
-        return "neon"
-    # Numeric neon_type: 2=mega, 1=neon, 0=normal
-    nt = pet.get("neon_type") or pet.get("neon_level") or pet.get("tier")
-    if nt is not None:
-        try:
-            nt = int(nt)
-            if nt >= 2:
-                return "mega"
-            if nt == 1:
-                return "neon"
-        except Exception:
-            pass
-    # pet_kind prefix
-    kind = pet.get("pet_kind", "")
-    if "mega_neon" in kind:
-        return "mega"
-    if kind.startswith("neon_"):
+    if pet.get("is_neon"):
         return "neon"
     return "normal"
 
