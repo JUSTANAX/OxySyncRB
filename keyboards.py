@@ -103,6 +103,8 @@ def autopilot_kb(
     else:
         rows.append([InlineKeyboardButton(text="▶️ Запустить", callback_data="ap_start")])
 
+    if main_account:
+        rows.append([InlineKeyboardButton(text="📦 Инвентарь осн. аккаунта", callback_data="ap_inventory")])
     rows.append([InlineKeyboardButton(text="♻️ Перезапустить все аккаунты", callback_data="ap_restart_all")])
     rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="automation")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -119,6 +121,13 @@ def farm_configs_kb(configs: list[dict]) -> InlineKeyboardMarkup:
         )])
     rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="autopilot")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def ap_inventory_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="ap_inventory_refresh")],
+        [InlineKeyboardButton(text="🔙 Назад",    callback_data="autopilot")],
+    ])
 
 
 def cancel_to_ap_kb() -> InlineKeyboardMarkup:

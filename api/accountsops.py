@@ -416,6 +416,45 @@ async def get_accounts_with_pet_details(api_key: str, pet_kind: str) -> tuple[bo
     return True, result, ""
 
 
+def _pet_tier(pet: dict) -> str:
+    if pet.get("is_mega_neon") or pet.get("mega_neon"):
+        return "mega"
+    if pet.get("is_neon") or pet.get("neon"):
+        return "neon"
+    kind = pet.get("pet_kind", "")
+    if kind.startswith("mega_neon_"):
+        return "mega"
+    if kind.startswith("neon_"):
+        return "neon"
+    return "normal"
+
+
+def _pet_display_name(pet: dict) -> str:
+    kind = pet.get("pet_kind", "")
+    if kind.startswith("mega_neon_"):
+        kind = kind[len("mega_neon_"):]
+    elif kind.startswith("neon_"):
+        kind = kind[len("neon_"):]
+    return pet_kind_to_name(kind)
+
+
+async def get_account_inventory_by_username(api_key: str, username: str) -> tuple[bool, list, str]:
+    """Get raw pets list for a specific account by username."""
+    ok, accounts, err = await get_trackstats_accounts(api_key)
+    if not ok:
+        return False, [], err
+    username_lower = username.lower()
+    acc_id = None
+    for acc in accounts:
+        u = (acc.get("username") or acc.get("name", "")).lower()
+        if u == username_lower:
+            acc_id = acc.get("id")
+            break
+    if acc_id is None:
+        return False, [], "Аккаунт не найден в trackstats"
+    return await get_account_pets(api_key, acc_id)
+
+
 async def get_totals(api_key: str) -> tuple[bool, dict, str]:
     """Sum bucks (money) and potions across all tracked accounts."""
     ok, accounts, err = await get_trackstats_accounts(api_key)

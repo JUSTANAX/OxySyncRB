@@ -6,7 +6,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest
 
-from api.accountsops import get_accounts_with_pet_details, set_accounts_enabled, set_accounts_config, get_trackstats_accounts, get_configs, get_usernames_by_tag
+from api.accountsops import (
+    get_accounts_with_pet_details, set_accounts_enabled, set_accounts_config,
+    get_trackstats_accounts, get_configs, get_usernames_by_tag,
+    get_account_inventory_by_username, _pet_tier, _pet_display_name,
+)
 from database import (
     get_panel,
     get_autopilot_config,
@@ -23,7 +27,7 @@ from database import (
     update_autopilot_pet_min_count, remove_autopilot_pet,
     add_autopilot_event,
 )
-from keyboards import autopilot_kb, ap_pets_kb, cancel_to_ap_kb, configs_kb, farm_configs_kb
+from keyboards import autopilot_kb, ap_pets_kb, ap_inventory_kb, cancel_to_ap_kb, configs_kb, farm_configs_kb
 
 router = Router()
 
@@ -635,6 +639,78 @@ async def ap_start(callback: CallbackQuery):
     add_autopilot_event(user_id, "started")
 
     await _show_autopilot(callback.message, user_id, edit=True)
+
+
+# ─── Инвентарь основного аккаунта ────────────────────────────────────────────
+
+async def _build_inventory_text(user_id: int) -> str:
+    ao_key = get_panel(user_id)
+    cfg    = get_autopilot_config(user_id)
+    if not ao_key or not cfg or not cfg.get("main_account"):
+        return "❌ Основной аккаунт не задан."
+
+    main = cfg["main_account"]
+    ok, pets, err = await get_account_inventory_by_username(ao_key, main)
+    if not ok:
+        return f"📦 <b>Инвентарь: {main}</b>\n\n❌ {err}"
+    if not pets:
+        return f"📦 <b>Инвентарь: {main}</b>\n\n<i>Инвентарь пуст</i>"
+
+    groups: dict[str, list] = {"mega": [], "neon": [], "normal": []}
+    for pet in pets:
+        tier = _pet_tier(pet)
+        name = _pet_display_name(pet)
+        qty  = pet.get("quantity", 1) or 1
+        groups[tier].append((name, qty))
+
+    for tier in groups:
+        groups[tier].sort(key=lambda x: (-x[1], x[0]))
+
+    lines = [f"📦 <b>Инвентарь: <code>{main}</code></b>", ""]
+
+    if groups["mega"]:
+        lines.append("🌟 <b>Мега-Неон</b>")
+        for name, qty in groups["mega"]:
+            lines.append(f"  • {name} × <b>{qty}</b>")
+        lines.append("")
+
+    if groups["neon"]:
+        lines.append("✨ <b>Неон</b>")
+        for name, qty in groups["neon"]:
+            lines.append(f"  • {name} × <b>{qty}</b>")
+        lines.append("")
+
+    if groups["normal"]:
+        lines.append("🦆 <b>Обычные</b>")
+        for name, qty in groups["normal"]:
+            lines.append(f"  • {name} × <b>{qty}</b>")
+
+    total = sum(qty for pets_list in groups.values() for _, qty in pets_list)
+    lines.append("")
+    lines.append(f"<i>Всего: {total} питомцев</i>")
+    return "\n".join(lines)
+
+
+@router.callback_query(lambda c: c.data == "ap_inventory")
+async def ap_inventory(callback: CallbackQuery):
+    await callback.answer("⏳ Загружаю...")
+    await callback.message.edit_text("⏳ Загружаю инвентарь...", parse_mode="HTML")
+    text = await _build_inventory_text(callback.from_user.id)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=ap_inventory_kb())
+    except TelegramBadRequest:
+        pass
+
+
+@router.callback_query(lambda c: c.data == "ap_inventory_refresh")
+async def ap_inventory_refresh(callback: CallbackQuery):
+    await callback.answer("🔄")
+    await callback.message.edit_text("⏳ Обновляю...", parse_mode="HTML")
+    text = await _build_inventory_text(callback.from_user.id)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=ap_inventory_kb())
+    except TelegramBadRequest:
+        pass
 
 
 # ─── Перезапуск всех аккаунтов ───────────────────────────────────────────────
