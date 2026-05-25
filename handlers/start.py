@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 
 from aiogram import Router
 from aiogram.filters import CommandStart, StateFilter
@@ -12,7 +13,8 @@ from api.faceunlock import get_balance
 from database import (
     get_panel, save_panel,
     get_alert, set_alert, toggle_alert,
-    save_totals_snapshot, get_totals_diff,
+    save_totals_snapshot,
+    get_period_baseline, save_period_baseline,
     get_zp_key,
 )
 from keyboards import stats_kb, settings_kb, alerts_kb, cancel_kb
@@ -95,6 +97,34 @@ def _fmt_diff(d: dict | None, key: str) -> str:
     return f"+{_fmt_num(v)}" if v > 0 else ("0" if v == 0 else _fmt_num(v))
 
 
+def _parse_dt(s: str) -> datetime:
+    s = s.replace("Z", "").split("+")[0].split(".")[0].strip()
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    raise ValueError(s)
+
+
+def _get_period_diff(user_id: int, current: dict, period_hours: int) -> dict:
+    baseline = get_period_baseline(user_id, period_hours)
+    if baseline is None:
+        save_period_baseline(user_id, period_hours, current["money"], current["potions"])
+        return {"money": 0, "potions": 0}
+    try:
+        elapsed_h = (datetime.utcnow() - _parse_dt(baseline["started_at"])).total_seconds() / 3600
+    except Exception:
+        elapsed_h = 0
+    if elapsed_h >= period_hours:
+        save_period_baseline(user_id, period_hours, current["money"], current["potions"])
+        return {"money": 0, "potions": 0}
+    return {
+        "money":   max(0, current["money"]   - (baseline.get("money")   or 0)),
+        "potions": max(0, current["potions"] - (baseline.get("potions") or 0)),
+    }
+
+
 def _diff_row(diffs: dict, key: str, period_slice) -> str:
     return "  ·  ".join(
         f"{lbl} {_fmt_diff(diffs.get(lbl), key)}"
@@ -110,7 +140,7 @@ def _append_totals(lines: list, user_id: int, ok_t: bool, totals: dict):
     if not totals:
         return
     save_totals_snapshot(user_id, totals["money"], totals["potions"])
-    diffs = {lbl: get_totals_diff(user_id, totals, h) for h, lbl in PERIODS}
+    diffs = {lbl: _get_period_diff(user_id, totals, h) for h, lbl in PERIODS}
 
     lines.append(f"💰 <b>Деньги:</b> {_fmt_num(totals['money'])}")
     lines.append(f"  {_diff_row(diffs, 'money', PERIODS[:3])}")

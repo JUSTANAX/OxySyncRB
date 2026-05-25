@@ -232,19 +232,22 @@ def save_totals_snapshot(user_id: int, money: int, potions: int):
     }).execute()
 
 
-def get_totals_diff(user_id: int, current: dict, hours: float) -> dict | None:
+def get_period_baseline(user_id: int, period_hours: int) -> dict | None:
     c = _get_client()
-    target = (datetime.utcnow() - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    rows = c.table("totals_snapshots").select("money, potions") \
-        .eq("user_id", user_id).lte("recorded_at", target) \
-        .order("recorded_at", desc=True).limit(1).execute()
-    if not rows.data:
-        return None
-    past = rows.data[0]
-    return {
-        "money":   max(0, current["money"]   - (past.get("money")   or 0)),
-        "potions": max(0, current["potions"] - (past.get("potions") or 0)),
-    }
+    rows = c.table("period_baselines").select("money, potions, started_at") \
+        .eq("user_id", user_id).eq("period_hours", period_hours).execute()
+    return rows.data[0] if rows.data else None
+
+
+def save_period_baseline(user_id: int, period_hours: int, money: int, potions: int):
+    c = _get_client()
+    c.table("period_baselines").upsert({
+        "user_id": user_id,
+        "period_hours": period_hours,
+        "money": money,
+        "potions": potions,
+        "started_at": _now_iso(),
+    }).execute()
 
 
 # ─── Watched pets ────────────────────────────────────────────────────────────
