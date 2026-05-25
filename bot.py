@@ -27,6 +27,8 @@ from database import (
     get_autopilot_pets,
     add_autopilot_event,
     save_autopilot_ready_count,
+    get_autopilot_queue_usernames,
+    add_autopilot_queue,
 )
 from handlers import start
 from handlers import faceunlock
@@ -39,6 +41,7 @@ from api.accountsops import (
     get_account_pets, get_pets_batch,
     get_trackstats_accounts,
     set_accounts_enabled, set_accounts_config,
+    get_usernames_by_tag,
 )
 from api.faceunlock import submit_job, get_status
 
@@ -288,6 +291,38 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         if acc.get("id")
     }
 
+    # Auto-enroll newly unblocked accounts not yet in queue
+    main_lower = cfg["main_account"].lower()
+    queue_usernames = get_autopilot_queue_usernames(user_id)
+    dead_set = await get_usernames_by_tag(ao_key, "status:dead")
+    new_accounts = []
+    for acc in ts_accounts:
+        username = acc.get("username") or acc.get("name", "")
+        if not username:
+            continue
+        u = username.lower()
+        if u == main_lower or u in dead_set or u in queue_usernames:
+            continue
+        acc_id = str(acc.get("id") or "")
+        new_accounts.append((acc_id, username))
+
+    if new_accounts:
+        new_usernames = [u for _, u in new_accounts]
+        if farm_config_id:
+            await set_accounts_config(ao_key, new_usernames, farm_config_id)
+        await set_accounts_enabled(ao_key, new_usernames, True)
+        add_autopilot_queue(user_id, new_accounts, status='farming')
+        add_autopilot_event(user_id, "accounts_added", f"+{len(new_accounts)}")
+        try:
+            await bot.send_message(
+                user_id,
+                f"🔓 <b>Авто-пилот</b> — добавлено <b>{len(new_accounts)}</b> новых аккаунтов\n\n"
+                f"<i>Обнаружены аккаунты не из очереди (разблокированы или новые)</i>",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logging.error("New accounts notify user=%s: %s", user_id, e)
+
     # Check farming accounts — fetch all pet inventories in parallel
     farming_entries = get_autopilot_farming_entries(user_id)
     fresh_ids = [username_to_id.get(username.lower(), acc_id)
@@ -380,9 +415,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.8.4 запущен ✅")
+    print("OxySync Bot v1.8.5 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.8.4</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.8.5</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

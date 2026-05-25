@@ -432,6 +432,12 @@ def save_autopilot_farm_config_id(user_id: int, config_id: int):
     _upsert_config(user_id, {"farm_config_id": config_id})
 
 
+def get_autopilot_queue_usernames(user_id: int) -> set[str]:
+    c = _get_client()
+    result = c.table("autopilot_queue").select("username").eq("user_id", user_id).execute()
+    return {r["username"].lower() for r in result.data if r.get("username")}
+
+
 def get_autopilot_farming_entries(user_id: int) -> list[tuple]:
     c = _get_client()
     result = c.table("autopilot_queue").select("id, account_id, username").eq("user_id", user_id).eq("status", "farming").order("id").execute()
