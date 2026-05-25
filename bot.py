@@ -37,6 +37,7 @@ from state_cache import get_all_stats_msgs, clear_stats_msg
 from api.accountsops import (
     get_dashboard, get_face_accounts,
     get_account_pets, get_pets_batch,
+    get_trackstats_accounts,
     set_accounts_enabled, set_accounts_config,
 )
 from api.faceunlock import submit_job, get_status
@@ -279,13 +280,23 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         except Exception as e:
             logging.error("Stuck notify user=%s: %s", user_id, e)
 
+    # Build fresh username→acc_id map from trackstats (avoids stale stored IDs)
+    _, ts_accounts, _ = await get_trackstats_accounts(ao_key)
+    username_to_id = {
+        (acc.get("username") or acc.get("name", "")).lower(): str(acc.get("id") or "")
+        for acc in ts_accounts
+        if acc.get("id")
+    }
+
     # Check farming accounts — fetch all pet inventories in parallel
     farming_entries = get_autopilot_farming_entries(user_id)
-    pets_map = await get_pets_batch(ao_key, [acc_id for _, acc_id, _ in farming_entries])
+    fresh_ids = [username_to_id.get(username.lower(), acc_id)
+                 for _, acc_id, username in farming_entries]
+    pets_map = await get_pets_batch(ao_key, [fid for fid in fresh_ids if fid])
 
     ready_by_pet: dict[str, list] = {}
-    for entry_id, acc_id, username in farming_entries:
-        for p in pets_map.get(acc_id, []):
+    for (entry_id, acc_id, username), fresh_id in zip(farming_entries, fresh_ids):
+        for p in pets_map.get(fresh_id, []):
             kind = p.get("pet_kind")
             if kind in pet_ids_set:
                 ready_by_pet.setdefault(kind, []).append((entry_id, acc_id, username))
@@ -369,9 +380,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.8.2 запущен ✅")
+    print("OxySync Bot v1.8.3 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.8.2</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.8.3</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
