@@ -296,7 +296,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
 
     ready_by_pet: dict[str, list] = {}
     for (entry_id, acc_id, username), fresh_id in zip(farming_entries, fresh_ids):
-        for p in pets_map.get(fresh_id, []):
+        for p in (pets_map.get(fresh_id) or []):
             kind = p.get("pet_kind")
             if kind in pet_ids_set:
                 ready_by_pet.setdefault(kind, []).append((entry_id, acc_id, username))
@@ -380,9 +380,9 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
-    print("OxySync Bot v1.8.3 запущен ✅")
+    print("OxySync Bot v1.8.4 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.8.3</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.8.4</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

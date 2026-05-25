@@ -173,7 +173,10 @@ async def get_pets_batch(api_key: str, account_ids: list) -> dict:
                 async with session.get(
                     url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
                 ) as resp:
-                    return acc_id, (await resp.json() if resp.status == 200 else [])
+                    if resp.status != 200:
+                        return acc_id, []
+                    body = await resp.json()
+                    return acc_id, (body if isinstance(body, list) else [])
             except Exception:
                 return acc_id, []
 
