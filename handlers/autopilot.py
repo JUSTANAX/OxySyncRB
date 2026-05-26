@@ -8,7 +8,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 from api.accountsops import (
     get_accounts_with_pet_details, set_accounts_enabled, set_accounts_config,
-    get_trackstats_accounts, get_configs, get_usernames_by_tag,
+    get_trackstats_accounts, get_all_accounts, get_configs, get_usernames_by_tag,
     get_account_inventory_by_username, _pet_tier, _pet_display_name,
     restart_accounts, get_pets_batch,
 )
@@ -666,8 +666,13 @@ async def ap_start(callback: CallbackQuery):
         parse_mode="HTML",
     )
 
-    ok_all, all_accounts, _ = await get_trackstats_accounts(ao_key)
-    if not ok_all or not all_accounts:
+    (ok_all, ts_accounts, _), (_, raw_accounts, _), face_set, dead_set = await asyncio.gather(
+        get_trackstats_accounts(ao_key),
+        get_all_accounts(ao_key),
+        get_usernames_by_tag(ao_key, "status:face"),
+        get_usernames_by_tag(ao_key, "status:dead"),
+    )
+    if not ok_all or not ts_accounts:
         await callback.message.edit_text(
             "🤖 <b>Авто-пилот</b>\n\n❌ Не удалось получить список аккаунтов.",
             parse_mode="HTML",
@@ -675,21 +680,30 @@ async def ap_start(callback: CallbackQuery):
         )
         return
 
-    face_set, dead_set = await asyncio.gather(
-        get_usernames_by_tag(ao_key, "status:face"),
-        get_usernames_by_tag(ao_key, "status:dead"),
-    )
+    # Set of usernames that are assigned to a device (from /api/accounts)
+    device_assigned: set[str] = {
+        (acc.get("username") or acc.get("name") or "").strip().lower()
+        for acc in raw_accounts
+        if (acc.get("device_id") or "").strip()
+    }
+
+    # username→trackstats_id map (needed for pets endpoint)
+    ts_id_map: dict[str, str] = {
+        (acc.get("username") or acc.get("name", "")).lower(): str(acc.get("id") or "")
+        for acc in ts_accounts if acc.get("id")
+    }
 
     main_lower    = cfg["main_account"].lower()
     farm_accounts = []
-    all_usernames = []
-    for acc in all_accounts:
+    all_usernames = list(ts_id_map.keys())
+    for acc in ts_accounts:
         username = acc.get("username") or acc.get("name", "")
         if not username:
             continue
-        all_usernames.append(username)
         u = username.lower()
         if u == main_lower or u in face_set or u in dead_set:
+            continue
+        if u not in device_assigned:
             continue
         acc_id = str(acc.get("id") or acc.get("account_id", ""))
         farm_accounts.append((acc_id, username))

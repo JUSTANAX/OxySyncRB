@@ -46,7 +46,7 @@ from state_cache import get_all_stats_msgs, clear_stats_msg
 from api.accountsops import (
     get_dashboard, get_face_accounts,
     get_account_pets, get_pets_batch,
-    get_trackstats_accounts,
+    get_trackstats_accounts, get_all_accounts,
     set_accounts_enabled, set_accounts_config,
     get_usernames_by_tag,
 )
@@ -314,11 +314,20 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             logging.error("Stuck notify user=%s: %s", user_id, e)
 
     # Build fresh username→acc_id map from trackstats (avoids stale stored IDs)
-    _, ts_accounts, _ = await get_trackstats_accounts(ao_key)
+    (_, ts_accounts, _), (_, raw_accounts, _) = await asyncio.gather(
+        get_trackstats_accounts(ao_key),
+        get_all_accounts(ao_key),
+    )
     username_to_id = {
         (acc.get("username") or acc.get("name", "")).lower(): str(acc.get("id") or "")
         for acc in ts_accounts
         if acc.get("id")
+    }
+    # Only auto-enroll accounts that are assigned to a device
+    device_assigned: set[str] = {
+        (acc.get("username") or acc.get("name") or "").strip().lower()
+        for acc in raw_accounts
+        if (acc.get("device_id") or "").strip()
     }
 
     # Auto-enroll newly unblocked accounts not yet in queue
@@ -332,6 +341,8 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             continue
         u = username.lower()
         if u == main_lower or u in dead_set or u in queue_usernames:
+            continue
+        if u not in device_assigned:
             continue
         acc_id = str(acc.get("id") or "")
         new_accounts.append((acc_id, username))
@@ -542,9 +553,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.2.3 запущен ✅")
+    print("OxySync Bot v2.2.4 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.2.3</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.2.4</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
