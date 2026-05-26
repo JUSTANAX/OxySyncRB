@@ -43,6 +43,7 @@ def automation_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔓 Auto-Unlock-Face", callback_data="face_unlock")],
         [InlineKeyboardButton(text="📂 Sorting",          callback_data="autoswap")],
         [InlineKeyboardButton(text="🔄 AutoSwap",         callback_data="deviceswap")],
+        [InlineKeyboardButton(text="✂️ Trim",             callback_data="devicetrim")],
         [InlineKeyboardButton(text="🤖 Авто-пилот",       callback_data="autopilot")],
         [InlineKeyboardButton(text="🔙 Назад",            callback_data="back")],
     ])
@@ -190,6 +191,28 @@ def deviceswap_kb(auto_enabled: bool, interval_hours: float) -> InlineKeyboardMa
 
     rows.append([
         InlineKeyboardButton(text="🔄 Обновить", callback_data="ds_refresh"),
+        InlineKeyboardButton(text="🔙 Назад",    callback_data="automation"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def devicetrim_kb(auto_enabled: bool, interval_hours: float, max_per_device: int) -> InlineKeyboardMarkup:
+    rows = []
+    rows.append([InlineKeyboardButton(text="▶️ Запустить Trim", callback_data="dt_run")])
+    rows.append([InlineKeyboardButton(text=f"📊 Лимит: {max_per_device} акк.", callback_data="dt_max_cycle")])
+
+    auto_label = "🔁 Авто: ✅" if auto_enabled else "🔁 Авто: ❌"
+    if auto_enabled:
+        hours_str = f"{int(interval_hours)}ч" if interval_hours == int(interval_hours) else f"{interval_hours}ч"
+        rows.append([
+            InlineKeyboardButton(text=auto_label,        callback_data="dt_auto_toggle"),
+            InlineKeyboardButton(text=f"⏱ {hours_str}", callback_data="dt_interval_cycle"),
+        ])
+    else:
+        rows.append([InlineKeyboardButton(text=auto_label, callback_data="dt_auto_toggle")])
+
+    rows.append([
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="dt_refresh"),
         InlineKeyboardButton(text="🔙 Назад",    callback_data="automation"),
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)

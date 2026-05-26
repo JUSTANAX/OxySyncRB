@@ -32,12 +32,14 @@ from database import (
     get_users_due_for_autoswap,
     get_autoswap_config as get_autoswap_cfg,
     get_users_due_for_deviceswap,
+    get_users_due_for_devicetrim,
 )
 from handlers import start
 from handlers import faceunlock
 from handlers import autopilot
 from handlers import autoswap
 from handlers import deviceswap
+from handlers import devicetrim
 from handlers.start import build_stats_text
 from keyboards import stats_kb
 from state_cache import get_all_stats_msgs, clear_stats_msg
@@ -444,6 +446,30 @@ async def deviceswap_loop(bot: Bot):
             logging.error("DeviceSwap loop error: %s", e)
 
 
+async def run_devicetrim(bot: Bot):
+    from handlers.devicetrim import do_trim
+    for user_id, ao_key, max_per_device in get_users_due_for_devicetrim():
+        try:
+            stats = await do_trim(ao_key, user_id, max_per_device)
+            if stats["devices"] == 0:
+                continue
+            lines = ["✂️ <b>Trim</b> — авто-обрезка выполнена", ""]
+            lines.append(f"📱 Девайсов обрезано: <b>{stats['devices']}</b>")
+            lines.append(f"📤 Перемещено в No Device: <b>{stats['trimmed']}</b>")
+            await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML")
+        except Exception as e:
+            logging.error("DeviceTrim run user=%s: %s", user_id, e)
+
+
+async def devicetrim_loop(bot: Bot):
+    while True:
+        await asyncio.sleep(1800)
+        try:
+            await run_devicetrim(bot)
+        except Exception as e:
+            logging.error("DeviceTrim loop error: %s", e)
+
+
 async def main():
     init_db()
     if ACCOUNTSOPS_KEY:
@@ -468,6 +494,7 @@ async def main():
     dp.include_router(autopilot.router)
     dp.include_router(autoswap.router)
     dp.include_router(deviceswap.router)
+    dp.include_router(devicetrim.router)
     dp.include_router(start.router)
     asyncio.create_task(alert_loop(bot))
     asyncio.create_task(auto_unlock_loop(bot))
@@ -476,9 +503,10 @@ async def main():
     asyncio.create_task(autopilot_transfer_loop(bot))
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
-    print("OxySync Bot v2.0.3 запущен ✅")
+    asyncio.create_task(devicetrim_loop(bot))
+    print("OxySync Bot v2.1.0 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.0.3</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.1.0</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
