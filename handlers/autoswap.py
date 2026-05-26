@@ -36,11 +36,14 @@ def _build_autoswap_page(user_id: int) -> tuple[str, any]:
     lines.append("Сортирует все аккаунты по папкам.")
     lines.append("")
     lines.append("📁 <b>Dead &amp; Face</b> — одна общая папка:")
-    lines.append("  <b>input</b>  → Мёртвые (status:dead)")
+    lines.append("  <b>input</b>  → Мёртвые (status:dead / dead_cookie)")
     lines.append("  <b>output</b> → Face-lock (status:face)")
     lines.append("")
     lines.append("📁 <b>Папки девайсов</b>:")
     lines.append("  <b>input</b>  → Только живые аккаунты")
+    lines.append("")
+    lines.append("📁 <b>No Device</b> → живые аккаунты без девайса")
+    lines.append("  <i>(резерв для AutoSwap и Trim)</i>")
     lines.append("")
     lines.append("──────────────────────")
     lines.append("")
@@ -118,12 +121,14 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
       input  → live accounts only (not dead, not face)
     Returns {devices, live, dead, face, created}.
     """
-    (ok_acc, unfoldered, _), (ok_fld, existing_folders, _), dead_set, face_set = await asyncio.gather(
+    (ok_acc, unfoldered, _), (ok_fld, existing_folders, _), dead_set, face_set, cookie_set = await asyncio.gather(
         get_all_accounts(ao_key),
         get_account_folders(ao_key),
         get_usernames_by_tag(ao_key, "status:dead"),
         get_usernames_by_tag(ao_key, "status:face"),
+        get_usernames_by_tag(ao_key, "dead_cookie"),
     )
+    dead_set |= cookie_set
 
     existing_folders = existing_folders if ok_fld else []
     folder_map: dict[str, int] = {f["name"]: f["id"] for f in existing_folders}
@@ -174,7 +179,7 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
         raw_tags = acc.get("tags") or acc.get("tag_list") or acc.get("labels") or []
         if isinstance(raw_tags, list):
             tag_strs = {str(t).lower() for t in raw_tags}
-            if "status:dead" in tag_strs:
+            if "status:dead" in tag_strs or "dead_cookie" in tag_strs:
                 dead_set.add(u)
             elif "status:face" in tag_strs:
                 face_set.add(u)
