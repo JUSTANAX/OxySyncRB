@@ -401,8 +401,9 @@ async def run_autoswap(bot: Bot):
             lines.append(f"📱 Девайсов: <b>{stats['devices']}</b>")
             if stats["created"]:
                 lines.append(f"🆕 Папок создано: <b>{stats['created']}</b>")
-            lines.append(f"✅ Живых (input): <b>{stats['live']}</b>")
-            lines.append(f"💀 Мёртвых (output): <b>{stats['dead']}</b>")
+            lines.append(f"✅ Живых (девайсы → input): <b>{stats['live']}</b>")
+            lines.append(f"💀 Мёртвых (Dead & Face → input): <b>{stats['dead']}</b>")
+            lines.append(f"🔒 Face-lock (Dead & Face → output): <b>{stats['face']}</b>")
             await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML")
         except Exception as e:
             logging.error("AutoSwap run user=%s: %s", user_id, e)
@@ -475,9 +476,9 @@ async def main():
     asyncio.create_task(autopilot_transfer_loop(bot))
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
-    print("OxySync Bot v2.0.0 запущен ✅")
+    print("OxySync Bot v2.0.1 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.0.0</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.0.1</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

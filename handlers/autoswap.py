@@ -33,10 +33,14 @@ def _build_autoswap_page(user_id: int) -> tuple[str, any]:
     last_run_at    = cfg["last_run_at"]    if cfg else None
 
     lines = ["📂 <b>Sorting</b>", ""]
-    lines.append("Сортирует все аккаунты по девайсам.")
-    lines.append("Для каждого девайса — своя папка:")
-    lines.append("  <b>input</b>  → Живые (без status:dead)")
-    lines.append("  <b>output</b> → Мёртвые (status:dead)")
+    lines.append("Сортирует все аккаунты по папкам.")
+    lines.append("")
+    lines.append("📁 <b>Dead &amp; Face</b> — одна общая папка:")
+    lines.append("  <b>input</b>  → Мёртвые (status:dead)")
+    lines.append("  <b>output</b> → Face-lock (status:face)")
+    lines.append("")
+    lines.append("📁 <b>Папки девайсов</b>:")
+    lines.append("  <b>input</b>  → Только живые аккаунты")
     lines.append("")
     lines.append("──────────────────────")
     lines.append("")
@@ -102,16 +106,23 @@ async def as_interval_cycle(callback: CallbackQuery):
 
 # ─── Сортировка ──────────────────────────────────────────────────────────────
 
+SPECIAL_FOLDER = "Dead & Face"
+
+
 async def do_sort(ao_key: str, user_id: int) -> dict:
     """
-    Groups accounts by device_id, creates a folder per device if needed,
-    moves live accounts to section=input and dead to section=output.
-    Returns {devices, live, dead, created_folders}.
+    Special folder "Dead & Face":
+      input  → all dead accounts (status:dead)
+      output → all face-lock accounts (status:face)
+    Device folders:
+      input  → live accounts only (not dead, not face)
+    Returns {devices, live, dead, face, created}.
     """
-    (ok_acc, unfoldered, _), (ok_fld, existing_folders, _), dead_set = await asyncio.gather(
+    (ok_acc, unfoldered, _), (ok_fld, existing_folders, _), dead_set, face_set = await asyncio.gather(
         get_all_accounts(ao_key),
         get_account_folders(ao_key),
         get_usernames_by_tag(ao_key, "status:dead"),
+        get_usernames_by_tag(ao_key, "status:face"),
     )
 
     existing_folders = existing_folders if ok_fld else []
@@ -139,23 +150,51 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
             all_accounts.append(acc)
 
     if not all_accounts:
-        return {"devices": 0, "live": 0, "dead": 0, "created": 0}
+        return {"devices": 0, "live": 0, "dead": 0, "face": 0, "created": 0}
 
     # existing folders: name → id
     folder_map: dict[str, int] = {f["name"]: f["id"] for f in existing_folders}
 
-    # group by device_id; accounts without a device go to a dedicated bucket
+    # ensure special folder exists
+    if SPECIAL_FOLDER not in folder_map:
+        ok_c, new_folder, _ = await create_folder(ao_key, SPECIAL_FOLDER)
+        if ok_c and new_folder and new_folder.get("id"):
+            folder_map[SPECIAL_FOLDER] = new_folder["id"]
+
+    # separate accounts into dead / face / live-by-device
+    dead_list: list[str] = []
+    face_list: list[str] = []
     NO_DEVICE_KEY = "No Device"
     by_device: dict[str, list[str]] = defaultdict(list)
+
     for acc in all_accounts:
-        device_id = (acc.get("device_id") or "").strip()
         username  = (acc.get("username") or acc.get("name") or "").strip()
+        device_id = (acc.get("device_id") or "").strip()
         if not username:
             continue
-        by_device[device_id or NO_DEVICE_KEY].append(username)
+        u = username.lower()
+        if u in dead_set:
+            dead_list.append(username)
+        elif u in face_set:
+            face_list.append(username)
+        else:
+            by_device[device_id or NO_DEVICE_KEY].append(username)
 
-    total_live = total_dead = created = 0
+    created = 0
 
+    # move dead + face into special folder
+    if SPECIAL_FOLDER in folder_map:
+        special_id = folder_map[SPECIAL_FOLDER]
+        tasks = []
+        if dead_list:
+            tasks.append(move_accounts_to_folder(ao_key, dead_list, special_id, section="input"))
+        if face_list:
+            tasks.append(move_accounts_to_folder(ao_key, face_list, special_id, section="output"))
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    # move live accounts into per-device folders
+    total_live = 0
     for device_id, usernames in by_device.items():
         folder_name = device_id
 
@@ -167,26 +206,15 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
             created += 1
 
         folder_id = folder_map[folder_name]
-
-        live_list = [u for u in usernames if u.lower() not in dead_set]
-        dead_list = [u for u in usernames if u.lower() in dead_set]
-
-        tasks = []
-        if live_list:
-            tasks.append(move_accounts_to_folder(ao_key, live_list, folder_id, section="input"))
-        if dead_list:
-            tasks.append(move_accounts_to_folder(ao_key, dead_list, folder_id, section="output"))
-        if tasks:
-            await asyncio.gather(*tasks)
-
-        total_live += len(live_list)
-        total_dead += len(dead_list)
+        await move_accounts_to_folder(ao_key, usernames, folder_id, section="input")
+        total_live += len(usernames)
 
     set_autoswap_last_run(user_id)
     return {
         "devices": len(by_device),
         "live":    total_live,
-        "dead":    total_dead,
+        "dead":    len(dead_list),
+        "face":    len(face_list),
         "created": created,
     }
 
@@ -215,8 +243,9 @@ async def as_run(callback: CallbackQuery):
     lines.append(f"📱 Девайсов обработано: <b>{stats['devices']}</b>")
     if stats["created"]:
         lines.append(f"🆕 Папок создано: <b>{stats['created']}</b>")
-    lines.append(f"✅ Живых (input): <b>{stats['live']}</b>")
-    lines.append(f"💀 Мёртвых (output): <b>{stats['dead']}</b>")
+    lines.append(f"✅ Живых (девайсы → input): <b>{stats['live']}</b>")
+    lines.append(f"💀 Мёртвых (Dead & Face → input): <b>{stats['dead']}</b>")
+    lines.append(f"🔒 Face-lock (Dead & Face → output): <b>{stats['face']}</b>")
 
     try:
         await callback.message.edit_text(
