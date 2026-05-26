@@ -627,6 +627,32 @@ async def move_accounts_to_folder(
     return True, None, ""
 
 
+async def assign_accounts_to_device(api_key: str, device_id: str, usernames: list[str]) -> tuple[bool, any, str]:
+    CHUNK = 50
+    last_err = ""
+    for i in range(0, max(len(usernames), 1), CHUNK):
+        chunk = usernames[i:i + CHUNK]
+        ok, _, err = await _put_2xx(api_key, "/api/accounts/device", {"device_id": device_id, "usernames": chunk})
+        if not ok:
+            last_err = err
+    if last_err:
+        return False, None, last_err
+    return True, None, ""
+
+
+async def unassign_accounts_from_device(api_key: str, device_id: str, usernames: list[str]) -> tuple[bool, any, str]:
+    CHUNK = 50
+    last_err = ""
+    for i in range(0, max(len(usernames), 1), CHUNK):
+        chunk = usernames[i:i + CHUNK]
+        ok, _, err = await _put_2xx(api_key, f"/api/devices/{device_id}/unassign", {"usernames": chunk})
+        if not ok:
+            last_err = err
+    if last_err:
+        return False, None, last_err
+    return True, None, ""
+
+
 def filter_pets(pets: dict, search: str, exclude: str | None = None) -> dict:
     """Return pets whose display name contains search (case-insensitive).
     Optionally exclude pets whose name contains the exclude string."""

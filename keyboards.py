@@ -41,9 +41,10 @@ def alerts_kb(threshold: int | None, enabled: bool) -> InlineKeyboardMarkup:
 def automation_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔓 Auto-Unlock-Face", callback_data="face_unlock")],
-        [InlineKeyboardButton(text="📂 Sorting",             callback_data="autoswap")],
-        [InlineKeyboardButton(text="🤖 Авто-пилот",        callback_data="autopilot")],
-        [InlineKeyboardButton(text="🔙 Назад",              callback_data="back")],
+        [InlineKeyboardButton(text="📂 Sorting",          callback_data="autoswap")],
+        [InlineKeyboardButton(text="🔄 AutoSwap",         callback_data="deviceswap")],
+        [InlineKeyboardButton(text="🤖 Авто-пилот",       callback_data="autopilot")],
+        [InlineKeyboardButton(text="🔙 Назад",            callback_data="back")],
     ])
 
 
@@ -168,6 +169,27 @@ def autoswap_kb(auto_enabled: bool, interval_hours: float) -> InlineKeyboardMark
 
     rows.append([
         InlineKeyboardButton(text="🔄 Обновить", callback_data="as_refresh"),
+        InlineKeyboardButton(text="🔙 Назад",    callback_data="automation"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def deviceswap_kb(auto_enabled: bool, interval_hours: float) -> InlineKeyboardMarkup:
+    rows = []
+    rows.append([InlineKeyboardButton(text="▶️ Запустить AutoSwap", callback_data="ds_run")])
+
+    auto_label = "🔁 Авто: ✅" if auto_enabled else "🔁 Авто: ❌"
+    if auto_enabled:
+        hours_str = f"{int(interval_hours)}ч" if interval_hours == int(interval_hours) else f"{interval_hours}ч"
+        rows.append([
+            InlineKeyboardButton(text=auto_label,        callback_data="ds_auto_toggle"),
+            InlineKeyboardButton(text=f"⏱ {hours_str}", callback_data="ds_interval_cycle"),
+        ])
+    else:
+        rows.append([InlineKeyboardButton(text=auto_label, callback_data="ds_auto_toggle")])
+
+    rows.append([
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="ds_refresh"),
         InlineKeyboardButton(text="🔙 Назад",    callback_data="automation"),
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)

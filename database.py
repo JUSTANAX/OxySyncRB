@@ -563,6 +563,73 @@ def get_users_due_for_autoswap() -> list[tuple[int, str]]:
 
 # ─── Autopilot events ─────────────────────────────────────────────────────────
 
+# ─── Device Swap ─────────────────────────────────────────────────────────────
+
+def get_deviceswap_config(user_id: int) -> dict | None:
+    c = _get_client()
+    result = c.table("deviceswap_config").select("*").eq("user_id", user_id).execute()
+    if not result.data:
+        return None
+    row = result.data[0]
+    return {
+        "auto_enabled":   bool(row.get("auto_enabled", 0)),
+        "interval_hours": float(row.get("interval_hours") or 1.0),
+        "last_run_at":    row.get("last_run_at"),
+    }
+
+
+def _upsert_deviceswap(user_id: int, fields: dict):
+    c = _get_client()
+    result = c.table("deviceswap_config").update(fields).eq("user_id", user_id).execute()
+    if not result.data:
+        try:
+            c.table("deviceswap_config").insert({"user_id": user_id, **fields}).execute()
+        except Exception:
+            pass
+
+
+def toggle_deviceswap_auto(user_id: int) -> bool:
+    c = _get_client()
+    result = c.table("deviceswap_config").select("auto_enabled").eq("user_id", user_id).execute()
+    current = bool(result.data[0]["auto_enabled"]) if result.data else False
+    new_val = not current
+    _upsert_deviceswap(user_id, {"auto_enabled": int(new_val)})
+    return new_val
+
+
+def save_deviceswap_interval(user_id: int, hours: float):
+    _upsert_deviceswap(user_id, {"interval_hours": hours})
+
+
+def set_deviceswap_last_run(user_id: int):
+    _upsert_deviceswap(user_id, {"last_run_at": _now_iso()})
+
+
+def get_users_due_for_deviceswap() -> list[tuple[int, str]]:
+    c = _get_client()
+    records = c.table("deviceswap_config").select("user_id, interval_hours, last_run_at") \
+        .eq("auto_enabled", 1).execute().data
+    if not records:
+        return []
+    now = datetime.utcnow()
+    due = []
+    for r in records:
+        if r["last_run_at"] is None:
+            due.append(r)
+        else:
+            interval = r.get("interval_hours") or 1.0
+            last_run_str = r["last_run_at"].replace("Z", "").split("+")[0]
+            last_run = datetime.fromisoformat(last_run_str)
+            if now >= last_run + timedelta(hours=interval):
+                due.append(r)
+    if not due:
+        return []
+    user_ids = [r["user_id"] for r in due]
+    panels = c.table("panels").select("user_id, api_key").in_("user_id", user_ids).execute().data
+    panels_map = {p["user_id"]: p["api_key"] for p in panels}
+    return [(r["user_id"], panels_map[r["user_id"]]) for r in due if r["user_id"] in panels_map]
+
+
 def add_autopilot_event(user_id: int, event_type: str, username: str | None = None):
     c = _get_client()
     c.table("autopilot_events").insert({

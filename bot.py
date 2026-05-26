@@ -31,11 +31,13 @@ from database import (
     add_autopilot_queue,
     get_users_due_for_autoswap,
     get_autoswap_config as get_autoswap_cfg,
+    get_users_due_for_deviceswap,
 )
 from handlers import start
 from handlers import faceunlock
 from handlers import autopilot
 from handlers import autoswap
+from handlers import deviceswap
 from handlers.start import build_stats_text
 from keyboards import stats_kb
 from state_cache import get_all_stats_msgs, clear_stats_msg
@@ -415,6 +417,32 @@ async def autoswap_loop(bot: Bot):
             logging.error("AutoSwap loop error: %s", e)
 
 
+async def run_deviceswap(bot: Bot):
+    from handlers.deviceswap import do_device_swap
+    for user_id, ao_key in get_users_due_for_deviceswap():
+        try:
+            stats = await do_device_swap(ao_key, user_id)
+            if stats["devices"] == 0:
+                continue
+            lines = ["🔄 <b>AutoSwap</b> — авто-замена выполнена", ""]
+            lines.append(f"📱 Девайсов обработано: <b>{stats['devices']}</b>")
+            lines.append(f"✅ Заменено аккаунтов: <b>{stats['replaced']}</b>")
+            if stats["no_reserve"]:
+                lines.append(f"⚠️ Не хватило рабочих аккаунтов: <b>{stats['no_reserve']}</b>")
+            await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML")
+        except Exception as e:
+            logging.error("DeviceSwap run user=%s: %s", user_id, e)
+
+
+async def deviceswap_loop(bot: Bot):
+    while True:
+        await asyncio.sleep(1800)
+        try:
+            await run_deviceswap(bot)
+        except Exception as e:
+            logging.error("DeviceSwap loop error: %s", e)
+
+
 async def main():
     init_db()
     if ACCOUNTSOPS_KEY:
@@ -438,6 +466,7 @@ async def main():
     dp.include_router(faceunlock.router)
     dp.include_router(autopilot.router)
     dp.include_router(autoswap.router)
+    dp.include_router(deviceswap.router)
     dp.include_router(start.router)
     asyncio.create_task(alert_loop(bot))
     asyncio.create_task(auto_unlock_loop(bot))
@@ -445,9 +474,10 @@ async def main():
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
     asyncio.create_task(autoswap_loop(bot))
-    print("OxySync Bot v1.9.2 запущен ✅")
+    asyncio.create_task(deviceswap_loop(bot))
+    print("OxySync Bot v2.0.0 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v1.9.2</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.0.0</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
