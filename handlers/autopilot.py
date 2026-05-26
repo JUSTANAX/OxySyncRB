@@ -19,7 +19,7 @@ from database import (
     save_autopilot_check_interval, save_autopilot_stuck_timeout, save_autopilot_batch_size,
     set_autopilot_running, set_autopilot_started_at,
     get_autopilot_farming_entries, get_autopilot_trading_entries,
-    get_autopilot_farming_count, get_autopilot_trading_count,
+    get_autopilot_farming_count,
     get_autopilot_stuck_entries,
     increment_autopilot_trades_done, get_autopilot_trades_done,
     add_autopilot_queue, clear_autopilot_queue,
@@ -78,9 +78,11 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     # ── Статус ────────────────────────────────────────────────────────────────
     if running:
         rt = _runtime_str(started_at)
-        farming_count = get_autopilot_farming_count(user_id)
-        trading_count = get_autopilot_trading_count(user_id)
-        stuck_count   = len(get_autopilot_stuck_entries(user_id, stuck_timeout * 60))
+        farming_count   = get_autopilot_farming_count(user_id)
+        trading_entries = get_autopilot_trading_entries(user_id)
+        stuck_entries   = get_autopilot_stuck_entries(user_id, stuck_timeout * 60)
+        trading_count   = len(trading_entries)
+        stuck_count     = len(stuck_entries)
 
         rt_part = f"  ·  🕐 {rt}" if rt else ""
         lines.append(f"▶️ <b>Работает</b>{rt_part}")
@@ -88,8 +90,12 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
         lines.append(f"  🌾 Фармит         <b>{farming_count}</b>")
         lines.append(f"  🦆 Нашли пета     <b>{ready_count}</b>")
         lines.append(f"  🔄 Трейдит         <b>{trading_count}</b>")
+        for _, _, u in trading_entries:
+            lines.append(f"      · <code>{u}</code>")
         if stuck_count:
             lines.append(f"  ⏰ Зависших        <b>{stuck_count}</b> ⚠️")
+            for _, _, u in stuck_entries:
+                lines.append(f"      · <code>{u}</code>")
         lines.append(f"  ✅ Сделок всего    <b>{trades_done}</b>")
     else:
         lines.append("⏹ <b>Остановлен</b>")
