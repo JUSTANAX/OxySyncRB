@@ -1,5 +1,13 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+_TYPE_MASKS  = [7, 1, 2, 4, 3, 5, 6]
+_TYPE_LABELS = {7: "Все", 1: "Норм", 2: "Неон", 4: "Мега", 3: "Норм+Неон", 5: "Норм+Мега", 6: "Неон+Мега"}
+
+
+def type_mask_label(mask: int) -> str:
+    return _TYPE_LABELS.get(mask, f"М:{mask}")
+
+
 # ─── Главный экран ────────────────────────────────────────────────────────────
 
 def stats_kb() -> InlineKeyboardMarkup:
@@ -52,12 +60,17 @@ def automation_kb() -> InlineKeyboardMarkup:
 
 def ap_pets_kb(pets: list[tuple]) -> InlineKeyboardMarkup:
     rows = []
-    for row_id, pet_id, min_count in pets:
+    for row_id, pet_id, min_count, age_min, age_max, type_mask in pets:
         short = pet_id if len(pet_id) <= 22 else pet_id[:19] + "..."
         rows.append([
             InlineKeyboardButton(text=f"🦆 {short}", callback_data="noop"),
             InlineKeyboardButton(text=f"📊 {min_count}", callback_data=f"ap_pet_threshold:{row_id}"),
             InlineKeyboardButton(text="❌", callback_data=f"ap_del_pet:{row_id}"),
+        ])
+        rows.append([
+            InlineKeyboardButton(text=f"🎂 Мин:{age_min}", callback_data=f"ap_pet_amin:{row_id}"),
+            InlineKeyboardButton(text=f"🎂 Макс:{age_max}", callback_data=f"ap_pet_amax:{row_id}"),
+            InlineKeyboardButton(text=f"🐾 {type_mask_label(type_mask)}", callback_data=f"ap_pet_type:{row_id}"),
         ])
     rows.append([
         InlineKeyboardButton(text="➕ Добавить", callback_data="ap_add_pet"),

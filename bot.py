@@ -224,6 +224,26 @@ async def stats_refresh_loop(bot: Bot):
                 clear_stats_msg(user_id)
 
 
+def _pet_kind_matches(kind: str, pet_ids_set: set[str]) -> bool:
+    if not kind:
+        return False
+    if kind in pet_ids_set:
+        return True
+    return any(kind.endswith(f"_{pid}") for pid in pet_ids_set)
+
+
+def _find_matching_pid(kind: str, pet_ids_set: set[str]) -> str | None:
+    """Return the configured pet_id that kind matches, or None."""
+    if not kind:
+        return None
+    if kind in pet_ids_set:
+        return kind
+    for pid in pet_ids_set:
+        if kind.endswith(f"_{pid}"):
+            return pid
+    return None
+
+
 async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     cfg      = get_autopilot_config(user_id)
     pet_rows = get_autopilot_pets(user_id)
@@ -231,9 +251,12 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         set_autopilot_running(user_id, False)
         return
 
-    # pet_rows = (id, pet_id, min_count)
-    pet_thresholds  = {pid: min_count for _, pid, min_count in pet_rows}
-    pet_ids_set     = set(pet_thresholds.keys())
+    # pet_rows = (id, pet_id, min_count, age_min, age_max, type_mask)
+    pet_configs: dict[str, dict] = {
+        pid: {"min_count": min_count, "age_min": age_min, "age_max": age_max, "type_mask": type_mask}
+        for _, pid, min_count, age_min, age_max, type_mask in pet_rows
+    }
+    pet_ids_set     = set(pet_configs.keys())
     trade_config_id = cfg.get("config_id")
     farm_config_id  = cfg.get("farm_config_id")
     max_traders_per_server = cfg.get("batch_size") or 10
@@ -253,7 +276,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         ok, pets, _ = await get_account_pets(ao_key, acc_id)
         if not ok:
             continue
-        if not any(p.get("pet_kind") in pet_ids_set for p in pets):
+        if not any(_pet_kind_matches(p.get("pet_kind", ""), pet_ids_set) for p in pets):
             if farm_config_id:
                 await set_accounts_config(ao_key, [username], farm_config_id)
             await set_accounts_enabled(ao_key, [username], False)
@@ -339,10 +362,21 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     ready_by_pet: dict[str, list] = {}
     for (entry_id, acc_id, username), fresh_id in zip(farming_entries, fresh_ids):
         for p in (pets_map.get(fresh_id) or []):
-            kind = p.get("pet_kind")
-            if kind in pet_ids_set:
-                ready_by_pet.setdefault(kind, []).append((entry_id, acc_id, username))
-                break
+            kind       = p.get("pet_kind") or ""
+            matched_pid = _find_matching_pid(kind, pet_ids_set)
+            if matched_pid is None:
+                continue
+            pcfg    = pet_configs[matched_pid]
+            pet_age = p.get("age") or 1
+            age_lo  = min(pcfg["age_min"], pcfg["age_max"])
+            age_hi  = max(pcfg["age_min"], pcfg["age_max"])
+            if not (age_lo <= pet_age <= age_hi):
+                continue
+            type_bit = 4 if p.get("is_mega") else (2 if p.get("is_neon") else 1)
+            if not (pcfg["type_mask"] & type_bit):
+                continue
+            ready_by_pet.setdefault(matched_pid, []).append((entry_id, acc_id, username))
+            break
 
     save_autopilot_ready_count(user_id, sum(len(v) for v in ready_by_pet.values()))
 
@@ -351,8 +385,8 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         return
 
     promoted: set[int] = set()
-    for pet_kind, ready_accounts in ready_by_pet.items():
-        threshold = pet_thresholds.get(pet_kind, 1)
+    for pid, ready_accounts in ready_by_pet.items():
+        threshold = pet_configs[pid]["min_count"]
         if len(ready_accounts) < threshold:
             continue
         for entry_id, acc_id, username in ready_accounts:
@@ -507,9 +541,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.1.4 запущен ✅")
+    print("OxySync Bot v2.2.0 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.1.4</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.2.0</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

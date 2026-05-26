@@ -26,9 +26,10 @@ from database import (
     set_autopilot_entry_status,
     get_autopilot_pets, add_autopilot_pet, add_autopilot_pets_bulk,
     update_autopilot_pet_min_count, remove_autopilot_pet,
+    update_autopilot_pet_filters,
     add_autopilot_event,
 )
-from keyboards import autopilot_kb, ap_pets_kb, ap_inventory_kb, cancel_to_ap_kb, configs_kb, farm_configs_kb
+from keyboards import autopilot_kb, ap_pets_kb, ap_inventory_kb, cancel_to_ap_kb, configs_kb, farm_configs_kb, type_mask_label, _TYPE_MASKS
 
 router = Router()
 
@@ -102,7 +103,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     lines.append(f"👤 Основной аккаунт: {main_str}")
 
     if pets:
-        for _, pid, min_count in pets:
+        for _, pid, min_count, *_ in pets:
             short   = pid if len(pid) <= 28 else pid[:25] + "…"
             min_str = f"  <i>(мин: {min_count})</i>" if min_count > 1 else ""
             lines.append(f"  🦆 <code>{short}</code>{min_str}")
@@ -394,13 +395,15 @@ def _pets_page_text(user_id: int) -> tuple[str, any]:
     pets = get_autopilot_pets(user_id)
     lines = ["🦆 <b>Петы авто-пилота</b>", ""]
     if pets:
-        for _, pid, min_count in pets:
-            min_str = f"  📊 мин: <b>{min_count}</b>" if min_count > 1 else ""
-            lines.append(f"• <code>{pid}</code>{min_str}")
+        for _, pid, min_count, age_min, age_max, type_mask in pets:
+            min_str  = f"  📊 <b>{min_count}</b>" if min_count > 1 else ""
+            age_str  = f"  🎂 <b>{age_min}–{age_max}</b>" if not (age_min == 1 and age_max == 6) else ""
+            type_str = f"  🐾 <b>{type_mask_label(type_mask)}</b>" if type_mask != 7 else ""
+            lines.append(f"• <code>{pid}</code>{min_str}{age_str}{type_str}")
     else:
         lines.append("<i>Нет добавленных петов</i>")
     lines.append("")
-    lines.append("<i>📊 — минимум аккаунтов с этим петом для перевода в трейд</i>")
+    lines.append("<i>📊 мин. акк.  ·  🎂 возраст  ·  🐾 тип пета</i>")
     return "\n".join(lines), ap_pets_kb(pets)
 
 
@@ -564,6 +567,79 @@ async def ap_del_pet(callback: CallbackQuery):
         pass
 
 
+@router.callback_query(lambda c: c.data.startswith("ap_pet_amin:"))
+async def ap_pet_amin(callback: CallbackQuery):
+    try:
+        row_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    pets = get_autopilot_pets(callback.from_user.id)
+    pet  = next((p for p in pets if p[0] == row_id), None)
+    if not pet:
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    _, _, _, age_min, age_max, _ = pet
+    new_min = (age_min % 6) + 1
+    update_autopilot_pet_filters(row_id, age_min=new_min)
+    await callback.answer()
+    text, kb = _pets_page_text(callback.from_user.id)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
+
+
+@router.callback_query(lambda c: c.data.startswith("ap_pet_amax:"))
+async def ap_pet_amax(callback: CallbackQuery):
+    try:
+        row_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    pets = get_autopilot_pets(callback.from_user.id)
+    pet  = next((p for p in pets if p[0] == row_id), None)
+    if not pet:
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    _, _, _, age_min, age_max, _ = pet
+    new_max = (age_max % 6) + 1
+    update_autopilot_pet_filters(row_id, age_max=new_max)
+    await callback.answer()
+    text, kb = _pets_page_text(callback.from_user.id)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
+
+
+@router.callback_query(lambda c: c.data.startswith("ap_pet_type:"))
+async def ap_pet_type(callback: CallbackQuery):
+    try:
+        row_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    pets = get_autopilot_pets(callback.from_user.id)
+    pet  = next((p for p in pets if p[0] == row_id), None)
+    if not pet:
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    _, _, _, _, _, type_mask = pet
+    try:
+        idx      = _TYPE_MASKS.index(type_mask)
+        new_mask = _TYPE_MASKS[(idx + 1) % len(_TYPE_MASKS)]
+    except ValueError:
+        new_mask = 7
+    update_autopilot_pet_filters(row_id, type_mask=new_mask)
+    await callback.answer()
+    text, kb = _pets_page_text(callback.from_user.id)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
+
+
 # ─── Запуск ───────────────────────────────────────────────────────────────────
 
 @router.callback_query(lambda c: c.data == "ap_start")
@@ -709,12 +785,16 @@ async def _build_inventory_text(user_id: int) -> str:
     # Aggregate by (tier, name, age) — different ages are separate lines
     from collections import defaultdict
     agg: dict[tuple, int] = defaultdict(int)
+    agg_kind: dict[tuple, str] = {}
     for pet in pets:
         tier = _pet_tier(pet)
         name = _pet_display_name(pet)
         qty  = pet.get("quantity", 1) or 1
         age  = _pet_age(pet)
-        agg[(tier, name, age)] += qty
+        key  = (tier, name, age)
+        agg[key] += qty
+        if key not in agg_kind:
+            agg_kind[key] = pet.get("pet_kind", "")
 
     TIER_EMOJI = {"mega": "🌟", "neon": "✨", "normal": "🦆"}
 
@@ -726,9 +806,11 @@ async def _build_inventory_text(user_id: int) -> str:
         items.sort(key=lambda x: (-x[2], x[0], x[1] or 0))
         result = [f"{emoji} <b>{label}</b>"]
         for name, age, cnt in items:
-            qty_str = f" ×{cnt}" if cnt > 1 else ""
-            age_str = f"  {age}" if age is not None else ""
-            result.append(f"  {emoji} {name}{qty_str}{age_str}")
+            qty_str  = f" ×{cnt}" if cnt > 1 else ""
+            age_str  = f"  {age}" if age is not None else ""
+            raw_kind = agg_kind.get((tier, name, age), "")
+            kind_str = f"\n     <code>{raw_kind}</code>" if raw_kind else ""
+            result.append(f"  {emoji} {name}{qty_str}{age_str}{kind_str}")
         return result
 
     lines = [f"📦 <b>Инвентарь: <code>{main}</code></b>", ""]

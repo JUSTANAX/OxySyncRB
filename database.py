@@ -335,18 +335,28 @@ def set_autopilot_started_at(user_id: int):
     _upsert_config(user_id, {"started_at": _now_iso()})
 
 
-def get_autopilot_pets(user_id: int) -> list[tuple[int, str, int]]:
+def get_autopilot_pets(user_id: int) -> list[tuple[int, str, int, int, int, int]]:
     c = _get_client()
-    result = c.table("autopilot_pets").select("id, pet_id, min_count").eq("user_id", user_id).order("id").execute()
-    return [(r["id"], r["pet_id"], r.get("min_count") or 1) for r in result.data]
+    result = c.table("autopilot_pets").select("id, pet_id, min_count, age_min, age_max, type_mask").eq("user_id", user_id).order("id").execute()
+    return [
+        (
+            r["id"],
+            r["pet_id"],
+            r.get("min_count") or 1,
+            r.get("age_min") or 1,
+            r.get("age_max") or 6,
+            r.get("type_mask") or 7,
+        )
+        for r in result.data
+    ]
 
 
-def add_autopilot_pet(user_id: int, pet_id: str, min_count: int = 1) -> bool:
+def add_autopilot_pet(user_id: int, pet_id: str, min_count: int = 1, age_min: int = 1, age_max: int = 6, type_mask: int = 7) -> bool:
     c = _get_client()
     existing = c.table("autopilot_pets").select("id").eq("user_id", user_id).eq("pet_id", pet_id).execute()
     if existing.data:
         return False
-    c.table("autopilot_pets").insert({"user_id": user_id, "pet_id": pet_id, "min_count": min_count}).execute()
+    c.table("autopilot_pets").insert({"user_id": user_id, "pet_id": pet_id, "min_count": min_count, "age_min": age_min, "age_max": age_max, "type_mask": type_mask}).execute()
     return True
 
 
@@ -357,9 +367,22 @@ def add_autopilot_pets_bulk(user_id: int, pet_ids: list[str]) -> tuple[int, int]
     existing_set = {r["pet_id"] for r in existing_rows.data}
     new_ids = [pid for pid in pet_ids if pid and pid not in existing_set]
     if new_ids:
-        records = [{"user_id": user_id, "pet_id": pid, "min_count": 1} for pid in new_ids]
+        records = [{"user_id": user_id, "pet_id": pid, "min_count": 1, "age_min": 1, "age_max": 6, "type_mask": 7} for pid in new_ids]
         c.table("autopilot_pets").insert(records).execute()
     return len(new_ids), len(pet_ids) - len(new_ids)
+
+
+def update_autopilot_pet_filters(row_id: int, age_min: int | None = None, age_max: int | None = None, type_mask: int | None = None):
+    c = _get_client()
+    fields = {}
+    if age_min is not None:
+        fields["age_min"] = age_min
+    if age_max is not None:
+        fields["age_max"] = age_max
+    if type_mask is not None:
+        fields["type_mask"] = type_mask
+    if fields:
+        c.table("autopilot_pets").update(fields).eq("id", row_id).execute()
 
 
 def update_autopilot_pet_min_count(row_id: int, min_count: int):
