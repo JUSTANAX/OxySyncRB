@@ -410,7 +410,8 @@ async def run_autopilot_transfer(bot: Bot):
             interval = (cfg.get("check_interval") or 30) if cfg else 30
             last = (cfg.get("last_checked_at") or "") if cfg else ""
             if last:
-                elapsed = (now - datetime.strptime(last, "%Y-%m-%d %H:%M:%S")).total_seconds()
+                last_clean = last.replace("Z", "").split("+")[0]
+                elapsed = (now - datetime.fromisoformat(last_clean)).total_seconds()
                 if elapsed < interval:
                     continue
             set_autopilot_last_checked(user_id)
@@ -541,9 +542,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.2.2 запущен ✅")
+    print("OxySync Bot v2.2.3 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.2.2</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.2.3</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
