@@ -334,37 +334,59 @@ def _format_for_zp(acc: dict) -> str | None:
     return cookie
 
 
-async def get_face_accounts(api_key: str) -> tuple[bool, list[str], str]:
-    """Fetch accounts tagged status:face and format them for ZeroPoint.
+_DEAD_FACE_FOLDER = "Dead & Face"
 
-    /api/devices/accounts has device-assigned accounts but no cookie data.
-    /api/accounts has full data (including cookie) for all accounts.
-    We cross-reference both to get face accounts with their cookies.
-    Also returns (ok, formatted, raw_face_count_str) where raw_face_count_str
-    is set when accounts were found but had no valid cookie data.
+
+async def get_face_accounts(api_key: str) -> tuple[bool, list[str], str]:
+    """Fetch face-lock accounts and format them for ZeroPoint.
+
+    Strategy (in order, stops when accounts with cookies are found):
+    1. "Dead & Face" folder → output section  (Sorting puts them there)
+    2. /api/accounts cross-referenced with status:face tag (fallback)
+    Returns (ok, formatted_lines, err).
     """
-    (ok, all_accounts, err), face_set = await asyncio.gather(
-        get_all_accounts(api_key),
+    (ok_fld, folders, _), face_set = await asyncio.gather(
+        get_account_folders(api_key),
         get_usernames_by_tag(api_key, "status:face"),
     )
-    if not ok:
-        return False, [], err
 
     formatted: list[str] = []
-    face_found = 0
+
+    # Strategy 1: "Dead & Face" folder → output section
+    if ok_fld:
+        dead_face = next((f for f in folders if f.get("name") == _DEAD_FACE_FOLDER), None)
+        if dead_face:
+            ok_r, folder_accs, _ = await get_folder_accounts(api_key, dead_face["id"])
+            if ok_r:
+                for acc in folder_accs:
+                    section = (acc.get("section") or acc.get("folder_section") or "").lower()
+                    if section != "output":
+                        continue
+                    line = _format_for_zp(acc)
+                    if line:
+                        formatted.append(line)
+
+    if formatted:
+        return True, formatted, ""
+
+    # Strategy 2: /api/accounts cross-referenced with face_set
+    ok_all, all_accounts, err_all = await get_all_accounts(api_key)
+    if not ok_all:
+        if face_set:
+            return True, [], f"no_cookie:{len(face_set)}"
+        return False, [], err_all
+
     for acc in all_accounts:
         u = (acc.get("username") or acc.get("name") or "").strip().lower()
         raw_tags = acc.get("tags") or []
         tag_strs = {str(t).lower() for t in raw_tags} if isinstance(raw_tags, list) else set()
         if "status:face" not in tag_strs and u not in face_set:
             continue
-        face_found += 1
         line = _format_for_zp(acc)
         if line:
             formatted.append(line)
 
-    if not formatted and face_found == 0 and face_set:
-        # Accounts are device-assigned but not in /api/accounts — no cookie data available
+    if not formatted and face_set:
         return True, [], f"no_cookie:{len(face_set)}"
 
     return True, formatted, ""
