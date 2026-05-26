@@ -4,10 +4,9 @@ from aiogram.types import CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
 
 from api.accountsops import (
-    get_all_accounts,
     get_account_folders,
     get_folder_accounts,
-    get_usernames_by_tag,
+    get_bad_accounts_by_device,
     assign_accounts_to_device,
     unassign_accounts_from_device,
 )
@@ -107,30 +106,16 @@ async def do_device_swap(ao_key: str, user_id: int) -> dict:
     the "No Device" folder (created by Sorting for accounts without a device).
     Returns {devices, replaced, no_reserve}.
     """
-    (ok_acc, all_accounts, _), (ok_fld, all_folders, _), dead_set, face_set = await asyncio.gather(
-        get_all_accounts(ao_key),
+    by_device, (ok_fld, all_folders, _) = await asyncio.gather(
+        get_bad_accounts_by_device(ao_key),
         get_account_folders(ao_key),
-        get_usernames_by_tag(ao_key, "status:dead"),
-        get_usernames_by_tag(ao_key, "status:face"),
     )
 
-    if not ok_acc or not all_accounts:
+    if not by_device:
+        set_deviceswap_last_run(user_id)
         return {"devices": 0, "replaced": 0, "no_reserve": 0}
 
-    # Supplement tag sets from account objects (tag endpoint misses some accounts)
-    for acc in all_accounts:
-        u = (acc.get("username") or acc.get("name") or "").strip().lower()
-        if not u:
-            continue
-        raw_tags = acc.get("tags") or []
-        if isinstance(raw_tags, list):
-            tag_strs = {str(t).lower() for t in raw_tags}
-            if "status:dead" in tag_strs:
-                dead_set.add(u)
-            elif "status:face" in tag_strs:
-                face_set.add(u)
-
-    bad_set = dead_set | face_set
+    bad_set = {u.lower() for usernames in by_device.values() for u in usernames}
 
     # Load reserve from "No Device" folder
     reserve: list[str] = []
@@ -144,20 +129,6 @@ async def do_device_swap(ao_key: str, user_id: int) -> dict:
                 username = (acc.get("username") or acc.get("name") or "").strip()
                 if username and username.lower() not in bad_set:
                     reserve.append(username)
-
-    # Find bad accounts per device
-    by_device: dict[str, list[str]] = {}
-    for acc in all_accounts:
-        username  = (acc.get("username") or acc.get("name") or "").strip()
-        device_id = (acc.get("device_id") or "").strip()
-        if not username or not device_id:
-            continue
-        if username.lower() in bad_set:
-            by_device.setdefault(device_id, []).append(username)
-
-    if not by_device:
-        set_deviceswap_last_run(user_id)
-        return {"devices": 0, "replaced": 0, "no_reserve": 0}
 
     total_replaced   = 0
     total_no_reserve = 0

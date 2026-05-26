@@ -363,6 +363,32 @@ async def get_usernames_by_tag(api_key: str, tag: str) -> set[str]:
     return usernames
 
 
+async def get_bad_accounts_by_device(api_key: str) -> dict[str, list[str]]:
+    """
+    Returns {device_id: [usernames]} for accounts tagged status:dead or status:face.
+    Uses /api/devices/accounts which returns device-assigned accounts grouped by device.
+    """
+    dead_result, face_result = await asyncio.gather(
+        _post(api_key, "/api/devices/accounts", {"tag": "status:dead"}),
+        _post(api_key, "/api/devices/accounts", {"tag": "status:face"}),
+    )
+    by_device: dict[str, list[str]] = {}
+    seen: set[str] = set()
+    for ok, data, _ in [dead_result, face_result]:
+        if not ok or not isinstance(data, dict):
+            continue
+        for device in data.get("devices", []):
+            device_id = (device.get("device_id") or "").strip()
+            if not device_id:
+                continue
+            for acc in device.get("accounts", []):
+                u = (acc.get("username") or acc.get("name") or "").strip()
+                if u and u.lower() not in seen:
+                    seen.add(u.lower())
+                    by_device.setdefault(device_id, []).append(u)
+    return by_device
+
+
 async def get_limits_status(api_key: str) -> tuple[bool, dict, str]:
     return await _get(api_key, "/api/limits/status")
 
