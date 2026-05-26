@@ -126,21 +126,35 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
     )
 
     existing_folders = existing_folders if ok_fld else []
+    folder_map: dict[str, int] = {f["name"]: f["id"] for f in existing_folders}
 
-    # collect accounts already in folders (parallel)
+    # Fetch all folder accounts in parallel; also extract Dead & Face sections
     foldered: list = []
     if existing_folders:
         results = await asyncio.gather(
             *[get_folder_accounts(ao_key, f["id"]) for f in existing_folders],
             return_exceptions=True,
         )
-        for r in results:
-            if not isinstance(r, BaseException):
-                ok, accs, _ = r
-                if ok:
-                    foldered.extend(accs)
+        for folder, r in zip(existing_folders, results):
+            if isinstance(r, BaseException):
+                continue
+            ok, accs, _ = r
+            if not ok:
+                continue
+            foldered.extend(accs)
+            # Source 2: accounts already sorted into Dead & Face by a previous run
+            if folder["name"] == SPECIAL_FOLDER:
+                for acc in accs:
+                    u = (acc.get("username") or acc.get("name") or "").strip().lower()
+                    if not u:
+                        continue
+                    section = (acc.get("section") or "").lower()
+                    if section == "input":
+                        dead_set.add(u)
+                    elif section == "output":
+                        face_set.add(u)
 
-    # merge unfoldered + foldered, deduplicate by username
+    # Merge unfoldered + foldered, deduplicate by username
     seen: set[str] = set()
     all_accounts: list = []
     for acc in (unfoldered if ok_acc else []) + foldered:
@@ -152,16 +166,29 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
     if not all_accounts:
         return {"devices": 0, "live": 0, "dead": 0, "face": 0, "created": 0}
 
-    # existing folders: name → id
-    folder_map: dict[str, int] = {f["name"]: f["id"] for f in existing_folders}
+    # Source 3: tags embedded in account objects (if API returns them)
+    for acc in all_accounts:
+        u = (acc.get("username") or acc.get("name") or "").strip().lower()
+        if not u:
+            continue
+        raw_tags = acc.get("tags") or acc.get("tag_list") or acc.get("labels") or []
+        if isinstance(raw_tags, list):
+            tag_strs = {str(t).lower() for t in raw_tags}
+            if "status:dead" in tag_strs:
+                dead_set.add(u)
+            elif "status:face" in tag_strs:
+                face_set.add(u)
 
-    # ensure special folder exists
+    # dead takes priority if both flags somehow present
+    face_set -= dead_set
+
+    # Ensure Dead & Face folder exists
     if SPECIAL_FOLDER not in folder_map:
         ok_c, new_folder, _ = await create_folder(ao_key, SPECIAL_FOLDER)
         if ok_c and new_folder and new_folder.get("id"):
             folder_map[SPECIAL_FOLDER] = new_folder["id"]
 
-    # separate accounts into dead / face / live-by-device
+    # Classify all accounts
     dead_list: list[str] = []
     face_list: list[str] = []
     NO_DEVICE_KEY = "No Device"
@@ -182,7 +209,7 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
 
     created = 0
 
-    # move dead + face into special folder
+    # Move dead + face into special folder
     if SPECIAL_FOLDER in folder_map:
         special_id = folder_map[SPECIAL_FOLDER]
         tasks = []
@@ -193,18 +220,16 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
         if tasks:
             await asyncio.gather(*tasks)
 
-    # move live accounts into per-device folders
+    # Move live accounts into per-device folders
     total_live = 0
     for device_id, usernames in by_device.items():
         folder_name = device_id
-
         if folder_name not in folder_map:
             ok_c, new_folder, _ = await create_folder(ao_key, folder_name)
             if not ok_c or not new_folder or not new_folder.get("id"):
                 continue
             folder_map[folder_name] = new_folder["id"]
             created += 1
-
         folder_id = folder_map[folder_name]
         await move_accounts_to_folder(ao_key, usernames, folder_id, section="input")
         total_live += len(usernames)
