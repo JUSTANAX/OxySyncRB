@@ -27,6 +27,7 @@ from database import (
     get_autopilot_pets, add_autopilot_pet, add_autopilot_pets_bulk,
     update_autopilot_pet_min_count, remove_autopilot_pet,
     update_autopilot_pet_filters,
+    remove_autopilot_queue_entries,
     add_autopilot_event,
 )
 from keyboards import autopilot_kb, ap_pets_kb, ap_inventory_kb, cancel_to_ap_kb, configs_kb, farm_configs_kb, type_mask_label, _TYPE_MASKS
@@ -931,6 +932,63 @@ async def ap_restart_all(callback: CallbackQuery):
         await set_accounts_enabled(ao_key, farm_usernames, True)
 
     await _show_autopilot(callback.message, user_id, edit=True)
+
+
+# ─── Очистка очереди ─────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_cleanup_queue")
+async def ap_cleanup_queue(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    ao_key  = get_panel(user_id)
+    if not ao_key:
+        await callback.answer("❌ AccountsOps не подключён.", show_alert=True)
+        return
+
+    await callback.answer("⏳ Проверяю...")
+    await callback.message.edit_text(
+        "🔧 <b>Очистка очереди</b>\n\n⏳ Получаю список девайсов...",
+        parse_mode="HTML",
+    )
+
+    farming_entries = get_autopilot_farming_entries(user_id)
+    if not farming_entries:
+        await callback.answer("ℹ️ Очередь фармеров пуста.", show_alert=True)
+        await _show_autopilot(callback.message, user_id, edit=True)
+        return
+
+    _, raw_accounts, _ = await get_all_accounts(ao_key)
+    device_assigned: set[str] = {
+        (acc.get("username") or acc.get("name") or "").strip().lower()
+        for acc in raw_accounts
+        if (acc.get("device_id") or "").strip()
+    }
+
+    to_remove = [
+        entry_id
+        for entry_id, _, username in farming_entries
+        if username.lower() not in device_assigned
+    ]
+
+    if to_remove:
+        remove_autopilot_queue_entries(to_remove)
+
+    kept    = len(farming_entries) - len(to_remove)
+    removed = len(to_remove)
+
+    lines = ["🔧 <b>Очистка очереди — готово</b>", ""]
+    lines.append(f"✅ Осталось в очереди: <b>{kept}</b>")
+    lines.append(f"🗑 Убрано (без девайса): <b>{removed}</b>")
+    lines.append("")
+    lines.append("<i>Trading-аккаунты не затронуты.</i>")
+
+    try:
+        await callback.message.edit_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=ap_inventory_kb(),
+        )
+    except TelegramBadRequest:
+        pass
 
 
 # ─── Debug петов ──────────────────────────────────────────────────────────────

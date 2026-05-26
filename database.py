@@ -395,6 +395,13 @@ def remove_autopilot_pet(row_id: int):
     c.table("autopilot_pets").delete().eq("id", row_id).execute()
 
 
+def remove_autopilot_queue_entries(entry_ids: list[int]):
+    if not entry_ids:
+        return
+    c = _get_client()
+    c.table("autopilot_queue").delete().in_("id", entry_ids).execute()
+
+
 def set_autopilot_running(user_id: int, running: bool):
     _upsert_config(user_id, {"running": int(running)})
 
