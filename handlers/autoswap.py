@@ -6,6 +6,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 from api.accountsops import (
     get_account_folders,
+    get_folder_accounts,
     get_all_accounts,
     get_usernames_by_tag,
     move_accounts_to_folder,
@@ -115,11 +116,9 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
       output → all face-lock accounts (status:face)
     Device folders:
       input  → live accounts only (not dead, not face)
-    /api/accounts returns ALL accounts with tags + folder_section, so no
-    per-folder fetches are needed.
     Returns {devices, live, dead, face, created}.
     """
-    (ok_acc, all_accounts, _), (ok_fld, existing_folders, _), dead_set, face_set = await asyncio.gather(
+    (ok_acc, unfoldered, _), (ok_fld, existing_folders, _), dead_set, face_set = await asyncio.gather(
         get_all_accounts(ao_key),
         get_account_folders(ao_key),
         get_usernames_by_tag(ao_key, "status:dead"),
@@ -129,15 +128,50 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
     existing_folders = existing_folders if ok_fld else []
     folder_map: dict[str, int] = {f["name"]: f["id"] for f in existing_folders}
 
-    if not ok_acc or not all_accounts:
+    # Fetch all folder accounts in parallel; also extract Dead & Face sections
+    foldered: list = []
+    if existing_folders:
+        results = await asyncio.gather(
+            *[get_folder_accounts(ao_key, f["id"]) for f in existing_folders],
+            return_exceptions=True,
+        )
+        for folder, r in zip(existing_folders, results):
+            if isinstance(r, BaseException):
+                continue
+            ok, accs, _ = r
+            if not ok:
+                continue
+            foldered.extend(accs)
+            # Source 2: accounts already sorted into Dead & Face by a previous run
+            if folder["name"] == SPECIAL_FOLDER:
+                for acc in accs:
+                    u = (acc.get("username") or acc.get("name") or "").strip().lower()
+                    if not u:
+                        continue
+                    section = (acc.get("section") or "").lower()
+                    if section == "input":
+                        dead_set.add(u)
+                    elif section == "output":
+                        face_set.add(u)
+
+    # Merge unfoldered + foldered, deduplicate by username
+    seen: set[str] = set()
+    all_accounts: list = []
+    for acc in (unfoldered if ok_acc else []) + foldered:
+        u = (acc.get("username") or acc.get("name") or "").strip().lower()
+        if u and u not in seen:
+            seen.add(u)
+            all_accounts.append(acc)
+
+    if not all_accounts:
         return {"devices": 0, "live": 0, "dead": 0, "face": 0, "created": 0}
 
-    # Primary source: tags array on every account object returned by /api/accounts
+    # Source 3: tags embedded in account objects (if API returns them)
     for acc in all_accounts:
         u = (acc.get("username") or acc.get("name") or "").strip().lower()
         if not u:
             continue
-        raw_tags = acc.get("tags") or []
+        raw_tags = acc.get("tags") or acc.get("tag_list") or acc.get("labels") or []
         if isinstance(raw_tags, list):
             tag_strs = {str(t).lower() for t in raw_tags}
             if "status:dead" in tag_strs:
@@ -145,30 +179,8 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
             elif "status:face" in tag_strs:
                 face_set.add(u)
 
-    # Fallback: accounts in Dead & Face folder keep their section classification
-    # (covers accounts whose tags were cleared but are still in the special folder)
-    for acc in all_accounts:
-        u = (acc.get("username") or acc.get("name") or "").strip().lower()
-        if not u or u in dead_set or u in face_set:
-            continue
-        if (acc.get("folder_name") or "").strip() == SPECIAL_FOLDER:
-            section = (acc.get("folder_section") or acc.get("section") or "").lower()
-            if section == "input":
-                dead_set.add(u)
-            elif section == "output":
-                face_set.add(u)
-
-    # dead takes priority
+    # dead takes priority if both flags somehow present
     face_set -= dead_set
-
-    # Deduplicate by username
-    seen: set[str] = set()
-    deduped: list = []
-    for acc in all_accounts:
-        u = (acc.get("username") or acc.get("name") or "").strip().lower()
-        if u and u not in seen:
-            seen.add(u)
-            deduped.append(acc)
 
     # Ensure Dead & Face folder exists
     if SPECIAL_FOLDER not in folder_map:
@@ -176,13 +188,13 @@ async def do_sort(ao_key: str, user_id: int) -> dict:
         if ok_c and new_folder and new_folder.get("id"):
             folder_map[SPECIAL_FOLDER] = new_folder["id"]
 
-    # Classify
+    # Classify all accounts
     dead_list: list[str] = []
     face_list: list[str] = []
     NO_DEVICE_KEY = "No Device"
     by_device: dict[str, list[str]] = defaultdict(list)
 
-    for acc in deduped:
+    for acc in all_accounts:
         username  = (acc.get("username") or acc.get("name") or "").strip()
         device_id = (acc.get("device_id") or "").strip()
         if not username:
