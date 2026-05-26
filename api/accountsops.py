@@ -536,22 +536,6 @@ async def create_folder(api_key: str, name: str) -> tuple[bool, dict, str]:
     return ok, data or {}, err
 
 
-async def get_all_accounts(api_key: str) -> tuple[bool, list, str]:
-    ok, data, err = await _get(api_key, "/api/accounts")
-    if not ok:
-        return False, [], err
-    if isinstance(data, list):
-        return True, data, ""
-    if isinstance(data, dict):
-        return True, data.get("accounts") or [], ""
-    return True, [], ""
-
-
-async def create_folder(api_key: str, name: str) -> tuple[bool, dict, str]:
-    ok, data, err = await _post(api_key, "/api/account-folders", {"name": name})
-    return ok, data or {}, err
-
-
 async def get_account_folders(api_key: str) -> tuple[bool, list, str]:
     ok, data, err = await _get(api_key, "/api/account-folders")
     if not ok:
