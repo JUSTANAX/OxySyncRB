@@ -229,12 +229,20 @@ async def fu_run(callback: CallbackQuery, state: FSMContext):
         return
 
     if not accounts:
-        await callback.message.edit_text(
-            "🔓 <b>Auto-Unlock-Face</b>\n\n"
-            "✅ Аккаунтов с тегом <code>status:face</code> не найдено.",
-            parse_mode="HTML",
-            reply_markup=fu_kb(None, []),
-        )
+        if err.startswith("no_cookie:"):
+            count = err.split(":")[1]
+            msg = (
+                f"🔓 <b>Auto-Unlock-Face</b>\n\n"
+                f"⚠️ Найдено <b>{count}</b> face-lock аккаунтов, но данные куки недоступны.\n\n"
+                f"<i>Аккаунты привязаны к девайсам — /api/accounts их не возвращает с куки.\n"
+                f"Нужен другой endpoint или ручной экспорт.</i>"
+            )
+        else:
+            msg = (
+                "🔓 <b>Auto-Unlock-Face</b>\n\n"
+                "✅ Аккаунтов с тегом <code>status:face</code> не найдено."
+            )
+        await callback.message.edit_text(msg, parse_mode="HTML", reply_markup=fu_kb(None, []))
         return
 
     await state.set_state(FUStates.confirming_run)

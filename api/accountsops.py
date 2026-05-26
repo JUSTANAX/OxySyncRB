@@ -335,17 +335,38 @@ def _format_for_zp(acc: dict) -> str | None:
 
 
 async def get_face_accounts(api_key: str) -> tuple[bool, list[str], str]:
-    """Fetch accounts tagged status:face and format them for ZeroPoint."""
-    ok, data, err = await _post(api_key, "/api/devices/accounts", {"tag": "status:face"})
+    """Fetch accounts tagged status:face and format them for ZeroPoint.
+
+    /api/devices/accounts has device-assigned accounts but no cookie data.
+    /api/accounts has full data (including cookie) for all accounts.
+    We cross-reference both to get face accounts with their cookies.
+    Also returns (ok, formatted, raw_face_count_str) where raw_face_count_str
+    is set when accounts were found but had no valid cookie data.
+    """
+    (ok, all_accounts, err), face_set = await asyncio.gather(
+        get_all_accounts(api_key),
+        get_usernames_by_tag(api_key, "status:face"),
+    )
     if not ok:
         return False, [], err
-    devices = data.get("devices", []) if isinstance(data, dict) else []
+
     formatted: list[str] = []
-    for device in devices:
-        for acc in device.get("accounts", []):
-            line = _format_for_zp(acc)
-            if line:
-                formatted.append(line)
+    face_found = 0
+    for acc in all_accounts:
+        u = (acc.get("username") or acc.get("name") or "").strip().lower()
+        raw_tags = acc.get("tags") or []
+        tag_strs = {str(t).lower() for t in raw_tags} if isinstance(raw_tags, list) else set()
+        if "status:face" not in tag_strs and u not in face_set:
+            continue
+        face_found += 1
+        line = _format_for_zp(acc)
+        if line:
+            formatted.append(line)
+
+    if not formatted and face_found == 0 and face_set:
+        # Accounts are device-assigned but not in /api/accounts — no cookie data available
+        return True, [], f"no_cookie:{len(face_set)}"
+
     return True, formatted, ""
 
 
