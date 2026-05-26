@@ -368,13 +368,14 @@ async def get_bad_accounts_by_device(api_key: str) -> dict[str, list[str]]:
     Returns {device_id: [usernames]} for accounts tagged status:dead or status:face.
     Uses /api/devices/accounts which returns device-assigned accounts grouped by device.
     """
-    dead_result, face_result = await asyncio.gather(
+    dead_result, face_result, cookie_result = await asyncio.gather(
         _post(api_key, "/api/devices/accounts", {"tag": "status:dead"}),
         _post(api_key, "/api/devices/accounts", {"tag": "status:face"}),
+        _post(api_key, "/api/devices/accounts", {"tag": "dead_cookie"}),
     )
     by_device: dict[str, list[str]] = {}
     seen: set[str] = set()
-    for ok, data, _ in [dead_result, face_result]:
+    for ok, data, _ in [dead_result, face_result, cookie_result]:
         if not ok or not isinstance(data, dict):
             continue
         for device in data.get("devices", []):
