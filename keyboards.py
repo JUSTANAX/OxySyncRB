@@ -123,6 +123,7 @@ def autopilot_kb(
     if main_account:
         rows.append([InlineKeyboardButton(text="📦 Инвентарь осн. аккаунта", callback_data="ap_inventory")])
     rows.append([InlineKeyboardButton(text="♻️ Перезапустить все аккаунты", callback_data="ap_restart_all")])
+    rows.append([InlineKeyboardButton(text="🔍 Debug петов", callback_data="ap_debug")])
     rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="automation")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

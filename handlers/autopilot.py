@@ -10,7 +10,7 @@ from api.accountsops import (
     get_accounts_with_pet_details, set_accounts_enabled, set_accounts_config,
     get_trackstats_accounts, get_configs, get_usernames_by_tag,
     get_account_inventory_by_username, _pet_tier, _pet_display_name,
-    restart_accounts,
+    restart_accounts, get_pets_batch,
 )
 from database import (
     get_panel,
@@ -917,6 +917,102 @@ async def ap_restart_all(callback: CallbackQuery):
         await set_accounts_enabled(ao_key, farm_usernames, True)
 
     await _show_autopilot(callback.message, user_id, edit=True)
+
+
+# ─── Debug петов ──────────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_debug")
+async def ap_debug(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    ao_key  = get_panel(user_id)
+    if not ao_key:
+        await callback.answer("❌ AccountsOps не подключён.", show_alert=True)
+        return
+
+    await callback.answer("⏳ Анализирую...")
+    await callback.message.edit_text("🔍 <b>Debug</b>\n\n⏳ Собираю данные...", parse_mode="HTML")
+
+    pet_rows       = get_autopilot_pets(user_id)
+    farming_entries = get_autopilot_farming_entries(user_id)
+
+    lines = ["🔍 <b>Debug авто-пилота</b>", ""]
+
+    # — Конфиг петов
+    lines.append(f"<b>Петы ({len(pet_rows)}):</b>")
+    if pet_rows:
+        for _, pid, min_count, age_min, age_max, type_mask in pet_rows:
+            lines.append(f"  • <code>{pid}</code>  min={min_count}  age={age_min}–{age_max}  mask={type_mask}")
+    else:
+        lines.append("  ❌ Петы не настроены!")
+
+    lines.append("")
+    lines.append(f"<b>Очередь фармеров:</b> {len(farming_entries)}")
+
+    if not farming_entries:
+        lines.append("  ❌ Нет аккаунтов в статусе farming!")
+        try:
+            await callback.message.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=ap_inventory_kb())
+        except TelegramBadRequest:
+            pass
+        return
+
+    # — Резолвим fresh_ids из trackstats
+    _, ts_accounts, _ = await get_trackstats_accounts(ao_key)
+    username_to_id = {
+        (acc.get("username") or acc.get("name", "")).lower(): str(acc.get("id") or "")
+        for acc in ts_accounts if acc.get("id")
+    }
+    lines.append(f"<b>Trackstats аккаунтов:</b> {len(username_to_id)}")
+
+    resolved = sum(1 for _, _, u in farming_entries if u.lower() in username_to_id)
+    lines.append(f"<b>Резолвилось из trackstats:</b> {resolved}/{len(farming_entries)}")
+
+    fresh_ids = [username_to_id.get(u.lower(), acc_id) for _, acc_id, u in farming_entries]
+
+    # — Тянем петов для первых 20 аккаунтов
+    sample_ids = [fid for fid in fresh_ids[:20] if fid]
+    lines.append(f"<b>Сэмпл: запрашиваем петов у {len(sample_ids)} акк.</b>")
+    pets_map = await get_pets_batch(ao_key, sample_ids)
+
+    non_empty = sum(1 for pets in pets_map.values() if pets)
+    lines.append(f"<b>Аккаунтов с непустым инвентарём:</b> {non_empty}/{len(sample_ids)}")
+
+    # — Собираем уникальные pet_kind из сэмпла
+    all_kinds: set[str] = set()
+    for pets in pets_map.values():
+        for p in pets:
+            k = p.get("pet_kind")
+            if k:
+                all_kinds.add(k)
+
+    lines.append(f"<b>Уникальных pet_kind в сэмпле:</b> {len(all_kinds)}")
+    if all_kinds:
+        sample_kinds = sorted(all_kinds)[:5]
+        for k in sample_kinds:
+            lines.append(f"  <code>{k}</code>")
+        if len(all_kinds) > 5:
+            lines.append(f"  ... и ещё {len(all_kinds) - 5}")
+
+    # — Проверяем матч
+    if pet_rows and all_kinds:
+        pet_ids_set = {pid for _, pid, *_ in pet_rows}
+        lines.append("")
+        lines.append("<b>Матч (suffix):</b>")
+        matched_any = False
+        for kind in sorted(all_kinds):
+            for pid in pet_ids_set:
+                if kind == pid or kind.endswith(f"_{pid}"):
+                    lines.append(f"  ✅ <code>{kind}</code> → <code>{pid}</code>")
+                    matched_any = True
+        if not matched_any:
+            lines.append("  ❌ Ни один pet_kind не матчится с настроенными петами")
+            lines.append("")
+            lines.append("<i>Совет: попробуй ввести полный pet_kind как ID пета</i>")
+
+    try:
+        await callback.message.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=ap_inventory_kb())
+    except TelegramBadRequest:
+        pass
 
 
 # ─── Остановка ────────────────────────────────────────────────────────────────
