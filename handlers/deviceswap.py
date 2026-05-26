@@ -117,6 +117,19 @@ async def do_device_swap(ao_key: str, user_id: int) -> dict:
     if not ok_acc or not all_accounts:
         return {"devices": 0, "replaced": 0, "no_reserve": 0}
 
+    # Supplement tag sets from account objects (tag endpoint misses some accounts)
+    for acc in all_accounts:
+        u = (acc.get("username") or acc.get("name") or "").strip().lower()
+        if not u:
+            continue
+        raw_tags = acc.get("tags") or []
+        if isinstance(raw_tags, list):
+            tag_strs = {str(t).lower() for t in raw_tags}
+            if "status:dead" in tag_strs:
+                dead_set.add(u)
+            elif "status:face" in tag_strs:
+                face_set.add(u)
+
     bad_set = dead_set | face_set
 
     # Load reserve from "No Device" folder
