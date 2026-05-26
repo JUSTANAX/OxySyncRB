@@ -6,7 +6,10 @@ from aiogram.exceptions import TelegramBadRequest
 
 from api.accountsops import (
     get_all_accounts,
+    get_account_folders,
+    get_folder_accounts,
     get_usernames_by_tag,
+    assign_accounts_to_device,
     unassign_accounts_from_device,
 )
 from database import (
@@ -111,21 +114,25 @@ async def dt_max_cycle(callback: CallbackQuery):
     await _show(callback.message, callback.from_user.id, edit=True)
 
 
+NO_DEVICE_FOLDER = "No Device"
+
+
 async def do_trim(ao_key: str, user_id: int, max_per_device: int) -> dict:
     """
-    For each device with more than max_per_device accounts:
-    unassign the excess, removing dead/face accounts first.
-    Unassigned accounts naturally become No Device.
-    Returns {devices, trimmed}.
+    For each device:
+      > max  → unassign excess (bad accounts first)
+      < max  → fill from "No Device" folder up to the limit
+    Returns {devices, trimmed, filled}.
     """
-    (ok_acc, all_accounts, _), dead_set, face_set = await asyncio.gather(
+    (ok_acc, all_accounts, _), (ok_fld, all_folders, _), dead_set, face_set = await asyncio.gather(
         get_all_accounts(ao_key),
+        get_account_folders(ao_key),
         get_usernames_by_tag(ao_key, "status:dead"),
         get_usernames_by_tag(ao_key, "status:face"),
     )
 
     if not ok_acc or not all_accounts:
-        return {"devices": 0, "trimmed": 0}
+        return {"devices": 0, "trimmed": 0, "filled": 0}
 
     for acc in all_accounts:
         u = (acc.get("username") or acc.get("name") or "").strip().lower()
@@ -134,7 +141,7 @@ async def do_trim(ao_key: str, user_id: int, max_per_device: int) -> dict:
         raw_tags = acc.get("tags") or []
         if isinstance(raw_tags, list):
             tag_strs = {str(t).lower() for t in raw_tags}
-            if "status:dead" in tag_strs:
+            if "status:dead" in tag_strs or "dead_cookie" in tag_strs:
                 dead_set.add(u)
             elif "status:face" in tag_strs:
                 face_set.add(u)
@@ -149,22 +156,46 @@ async def do_trim(ao_key: str, user_id: int, max_per_device: int) -> dict:
             continue
         by_device[device_id].append((username, username.lower() in bad_set))
 
+    # Load reserve from "No Device" folder
+    reserve: list[str] = []
+    no_device_folder = next(
+        (f for f in (all_folders or []) if f.get("name") == NO_DEVICE_FOLDER), None
+    )
+    if no_device_folder:
+        ok_r, folder_accs, _ = await get_folder_accounts(ao_key, no_device_folder["id"])
+        if ok_r:
+            for acc in folder_accs:
+                username = (acc.get("username") or acc.get("name") or "").strip()
+                if username and username.lower() not in bad_set:
+                    reserve.append(username)
+
+    reserve_idx      = 0
     total_trimmed    = 0
+    total_filled     = 0
     affected_devices = 0
 
     for device_id, acc_list in by_device.items():
-        if len(acc_list) <= max_per_device:
-            continue
-        # bad accounts (dead/face) removed first
-        acc_list.sort(key=lambda x: (0 if x[1] else 1))
-        excess    = len(acc_list) - max_per_device
-        to_remove = [username for username, _ in acc_list[:excess]]
-        await unassign_accounts_from_device(ao_key, device_id, to_remove)
-        total_trimmed    += len(to_remove)
-        affected_devices += 1
+        count = len(acc_list)
+
+        if count > max_per_device:
+            acc_list.sort(key=lambda x: (0 if x[1] else 1))
+            excess    = count - max_per_device
+            to_remove = [username for username, _ in acc_list[:excess]]
+            await unassign_accounts_from_device(ao_key, device_id, to_remove)
+            total_trimmed    += len(to_remove)
+            affected_devices += 1
+
+        elif count < max_per_device:
+            slots     = max_per_device - count
+            to_assign = reserve[reserve_idx:reserve_idx + slots]
+            if to_assign:
+                await assign_accounts_to_device(ao_key, device_id, to_assign)
+                total_filled  += len(to_assign)
+                reserve_idx   += len(to_assign)
+                affected_devices += 1
 
     set_devicetrim_last_run(user_id)
-    return {"devices": affected_devices, "trimmed": total_trimmed}
+    return {"devices": affected_devices, "trimmed": total_trimmed, "filled": total_filled}
 
 
 @router.callback_query(lambda c: c.data == "dt_run")
@@ -192,10 +223,13 @@ async def dt_run(callback: CallbackQuery):
 
     lines = ["✂️ <b>Trim — готово!</b>", ""]
     if stats["devices"] == 0:
-        lines.append("ℹ️ Все девайсы в пределах лимита.")
+        lines.append("ℹ️ Все девайсы уже на нужном лимите.")
     else:
-        lines.append(f"📱 Девайсов обрезано: <b>{stats['devices']}</b>")
-        lines.append(f"📤 Перемещено в No Device: <b>{stats['trimmed']}</b>")
+        lines.append(f"📱 Девайсов обработано: <b>{stats['devices']}</b>")
+        if stats["trimmed"]:
+            lines.append(f"📤 Убрано в No Device: <b>{stats['trimmed']}</b>")
+        if stats["filled"]:
+            lines.append(f"📥 Добавлено из No Device: <b>{stats['filled']}</b>")
 
     try:
         await callback.message.edit_text(

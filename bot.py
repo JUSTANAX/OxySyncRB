@@ -453,9 +453,12 @@ async def run_devicetrim(bot: Bot):
             stats = await do_trim(ao_key, user_id, max_per_device)
             if stats["devices"] == 0:
                 continue
-            lines = ["✂️ <b>Trim</b> — авто-обрезка выполнена", ""]
-            lines.append(f"📱 Девайсов обрезано: <b>{stats['devices']}</b>")
-            lines.append(f"📤 Перемещено в No Device: <b>{stats['trimmed']}</b>")
+            lines = ["✂️ <b>Trim</b> — авто-запуск выполнен", ""]
+            lines.append(f"📱 Девайсов обработано: <b>{stats['devices']}</b>")
+            if stats["trimmed"]:
+                lines.append(f"📤 Убрано в No Device: <b>{stats['trimmed']}</b>")
+            if stats["filled"]:
+                lines.append(f"📥 Добавлено из No Device: <b>{stats['filled']}</b>")
             await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML")
         except Exception as e:
             logging.error("DeviceTrim run user=%s: %s", user_id, e)
@@ -504,9 +507,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.1.3 запущен ✅")
+    print("OxySync Bot v2.1.4 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.1.3</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.1.4</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
