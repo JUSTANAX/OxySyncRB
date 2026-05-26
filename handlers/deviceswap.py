@@ -5,6 +5,8 @@ from aiogram.exceptions import TelegramBadRequest
 
 from api.accountsops import (
     get_all_accounts,
+    get_account_folders,
+    get_folder_accounts,
     get_usernames_by_tag,
     assign_accounts_to_device,
     unassign_accounts_from_device,
@@ -35,7 +37,8 @@ def _build_page(user_id: int) -> tuple[str, any]:
     lines.append("Для каждого девайса:")
     lines.append("  — находит аккаунты с тегом <code>status:dead</code> или <code>status:face</code>")
     lines.append("  — отвязывает их от девайса")
-    lines.append("  — привязывает столько же рабочих аккаунтов из пула без девайса")
+    lines.append(f"  — берёт замену из папки <code>{NO_DEVICE_FOLDER}</code> (Sorting)")
+    lines.append("  — привязывает их к девайсу")
     lines.append("")
     lines.append("──────────────────────")
     lines.append("")
@@ -95,37 +98,49 @@ async def ds_interval_cycle(callback: CallbackQuery):
     await _show(callback.message, callback.from_user.id, edit=True)
 
 
+NO_DEVICE_FOLDER = "No Device"
+
+
 async def do_device_swap(ao_key: str, user_id: int) -> dict:
     """
-    For each device: unassign dead/face accounts, assign working accounts from reserve pool.
-    Reserve = accounts with no device that are not dead/face.
+    For each device: unassign dead/face accounts, assign replacements from
+    the "No Device" folder (created by Sorting for accounts without a device).
     Returns {devices, replaced, no_reserve}.
     """
-    ok_acc, all_accounts, _ = await get_all_accounts(ao_key)
-    if not ok_acc or not all_accounts:
-        return {"devices": 0, "replaced": 0, "no_reserve": 0}
-
-    dead_set, face_set = await asyncio.gather(
+    (ok_acc, all_accounts, _), (ok_fld, all_folders, _), dead_set, face_set = await asyncio.gather(
+        get_all_accounts(ao_key),
+        get_account_folders(ao_key),
         get_usernames_by_tag(ao_key, "status:dead"),
         get_usernames_by_tag(ao_key, "status:face"),
     )
+
+    if not ok_acc or not all_accounts:
+        return {"devices": 0, "replaced": 0, "no_reserve": 0}
+
     bad_set = dead_set | face_set
 
-    by_device: dict[str, list[str]] = {}
+    # Load reserve from "No Device" folder
     reserve: list[str] = []
+    no_device_folder = next(
+        (f for f in (all_folders or []) if f.get("name") == NO_DEVICE_FOLDER), None
+    )
+    if no_device_folder:
+        ok_r, folder_accs, _ = await get_folder_accounts(ao_key, no_device_folder["id"])
+        if ok_r:
+            for acc in folder_accs:
+                username = (acc.get("username") or acc.get("name") or "").strip()
+                if username and username.lower() not in bad_set:
+                    reserve.append(username)
 
+    # Find bad accounts per device
+    by_device: dict[str, list[str]] = {}
     for acc in all_accounts:
         username  = (acc.get("username") or acc.get("name") or "").strip()
         device_id = (acc.get("device_id") or "").strip()
-        if not username:
+        if not username or not device_id:
             continue
-        u = username.lower()
-        if device_id:
-            if u in bad_set:
-                by_device.setdefault(device_id, []).append(username)
-        else:
-            if u not in bad_set:
-                reserve.append(username)
+        if username.lower() in bad_set:
+            by_device.setdefault(device_id, []).append(username)
 
     if not by_device:
         set_deviceswap_last_run(user_id)

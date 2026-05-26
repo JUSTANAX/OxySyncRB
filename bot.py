@@ -476,9 +476,9 @@ async def main():
     asyncio.create_task(autopilot_transfer_loop(bot))
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
-    print("OxySync Bot v2.0.1 запущен ✅")
+    print("OxySync Bot v2.0.2 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.0.1</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.0.2</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
