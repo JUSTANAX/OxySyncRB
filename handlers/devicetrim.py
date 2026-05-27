@@ -1,7 +1,9 @@
 import asyncio
 from collections import defaultdict
-from aiogram import Router
-from aiogram.types import CallbackQuery
+from aiogram import Router, F
+from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest
 
 from api.accountsops import (
@@ -20,12 +22,15 @@ from database import (
     save_devicetrim_max,
     set_devicetrim_last_run,
 )
-from keyboards import devicetrim_kb
+from keyboards import devicetrim_kb, cancel_kb
 
 router = Router()
 
-_INTERVALS  = [0.5, 1.0, 2.0, 3.0, 6.0, 12.0, 24.0]
-_MAX_VALUES = [50, 100, 150, 200, 250, 300, 350, 400, 500]
+_INTERVALS = [0.5, 1.0, 2.0, 3.0, 6.0, 12.0, 24.0]
+
+
+class DTStates(StatesGroup):
+    waiting_max = State()
 
 
 def _build_page(user_id: int) -> tuple[str, any]:
@@ -100,18 +105,31 @@ async def dt_interval_cycle(callback: CallbackQuery):
     await _show(callback.message, callback.from_user.id, edit=True)
 
 
-@router.callback_query(lambda c: c.data == "dt_max_cycle")
-async def dt_max_cycle(callback: CallbackQuery):
-    cfg     = get_devicetrim_config(callback.from_user.id)
-    current = (cfg["max_per_device"] if cfg else 300) or 300
-    try:
-        idx      = _MAX_VALUES.index(current)
-        next_val = _MAX_VALUES[(idx + 1) % len(_MAX_VALUES)]
-    except ValueError:
-        next_val = 300
-    save_devicetrim_max(callback.from_user.id, next_val)
+@router.callback_query(lambda c: c.data == "dt_max_set")
+async def dt_max_set(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    await _show(callback.message, callback.from_user.id, edit=True)
+    await state.set_state(DTStates.waiting_max)
+    await state.update_data(msg_id=callback.message.message_id)
+    await callback.message.edit_text(
+        "✂️ <b>Trim — лимит аккаунтов</b>\n\n"
+        "Введи число аккаунтов на девайс:",
+        parse_mode="HTML",
+        reply_markup=cancel_kb("devicetrim"),
+    )
+
+
+@router.message(DTStates.waiting_max, F.text)
+async def dt_max_input(message: Message, state: FSMContext):
+    raw = message.text.strip()
+    if not raw.isdigit() or int(raw) < 1:
+        await message.answer("❌ Введи целое число больше 0.")
+        return
+    value = int(raw)
+    save_devicetrim_max(message.from_user.id, value)
+    await state.clear()
+    await message.delete()
+    text, kb = _build_page(message.from_user.id)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 NO_DEVICE_FOLDER = "No Device"

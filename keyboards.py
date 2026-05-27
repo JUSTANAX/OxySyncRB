@@ -214,7 +214,7 @@ def deviceswap_kb(auto_enabled: bool, interval_hours: float) -> InlineKeyboardMa
 def devicetrim_kb(auto_enabled: bool, interval_hours: float, max_per_device: int) -> InlineKeyboardMarkup:
     rows = []
     rows.append([InlineKeyboardButton(text="▶️ Запустить Trim", callback_data="dt_run")])
-    rows.append([InlineKeyboardButton(text=f"📊 Лимит: {max_per_device} акк.", callback_data="dt_max_cycle")])
+    rows.append([InlineKeyboardButton(text=f"📊 Лимит: {max_per_device} акк. ✏️", callback_data="dt_max_set")])
 
     auto_label = "🔁 Авто: ✅" if auto_enabled else "🔁 Авто: ❌"
     if auto_enabled:
