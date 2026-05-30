@@ -1,8 +1,12 @@
 import asyncio
 import logging
+import time
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(message)s")
 
 from datetime import datetime
+
+_trade_cooldown: dict[int, float] = {}  # entry_id → timestamp завершения трейда
+TRADE_COOLDOWN_SEC = 300  # 5 минут
 from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
@@ -282,6 +286,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             set_autopilot_entry_status(entry_id, "farming")
             increment_autopilot_trades_done(user_id)
             add_autopilot_event(user_id, "trade_complete", username)
+            _trade_cooldown[entry_id] = time.time()
 
     # Build fresh username→acc_id map from trackstats (avoids stale stored IDs)
     (_, ts_accounts, _), (_, raw_accounts, _) = await asyncio.gather(
@@ -340,8 +345,11 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
                  for _, acc_id, username in farming_entries]
     pets_map = await get_pets_batch(ao_key, [fid for fid in fresh_ids if fid])
 
+    now_ts = time.time()
     ready_by_pet: dict[str, list] = {}
     for (entry_id, acc_id, username), fresh_id in zip(farming_entries, fresh_ids):
+        if now_ts - _trade_cooldown.get(entry_id, 0) < TRADE_COOLDOWN_SEC:
+            continue
         pet_counts: dict[str, int] = {}
         for p in (pets_map.get(fresh_id) or []):
             kind        = p.get("pet_kind") or ""
@@ -524,9 +532,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.2 запущен ✅")
+    print("OxySync Bot v2.3.3 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.2</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.3</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
