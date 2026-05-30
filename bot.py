@@ -342,8 +342,9 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
 
     ready_by_pet: dict[str, list] = {}
     for (entry_id, acc_id, username), fresh_id in zip(farming_entries, fresh_ids):
+        pet_counts: dict[str, int] = {}
         for p in (pets_map.get(fresh_id) or []):
-            kind       = p.get("pet_kind") or ""
+            kind        = p.get("pet_kind") or ""
             matched_pid = _find_matching_pid(kind, pet_ids_set)
             if matched_pid is None:
                 continue
@@ -356,8 +357,11 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             type_bit = 4 if p.get("is_mega") else (2 if p.get("is_neon") else 1)
             if not (pcfg["type_mask"] & type_bit):
                 continue
-            ready_by_pet.setdefault(matched_pid, []).append((entry_id, acc_id, username))
-            break
+            qty = p.get("quantity") or 1
+            pet_counts[matched_pid] = pet_counts.get(matched_pid, 0) + qty
+        for pid, count in pet_counts.items():
+            if count >= pet_configs[pid]["min_count"]:
+                ready_by_pet.setdefault(pid, []).append((entry_id, acc_id, username))
 
     save_autopilot_ready_count(user_id, sum(len(v) for v in ready_by_pet.values()))
 
@@ -367,9 +371,6 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
 
     promoted: set[int] = set()
     for pid, ready_accounts in ready_by_pet.items():
-        threshold = pet_configs[pid]["min_count"]
-        if len(ready_accounts) < threshold:
-            continue
         for entry_id, acc_id, username in ready_accounts:
             if entry_id in promoted or current_trading >= max_traders_per_server:
                 break
@@ -523,9 +524,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.1 запущен ✅")
+    print("OxySync Bot v2.3.2 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.1</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.2</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
