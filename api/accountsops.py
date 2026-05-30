@@ -143,6 +143,13 @@ async def get_dashboard(api_key: str) -> tuple[bool, dict, str]:
     return ok, data or {}, err
 
 
+async def get_events(api_key: str, limit: int = 50) -> tuple[bool, list, str]:
+    ok, data, err = await _get(api_key, f"/api/events?limit={limit}")
+    if not ok:
+        return False, [], err
+    return True, data if isinstance(data, list) else [], ""
+
+
 async def get_trackstats_accounts(api_key: str) -> tuple[bool, list, str]:
     ok, data, err = await _get(api_key, "/api/trackstats/accounts")
     if not ok:

@@ -5,8 +5,8 @@ logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(message)s")
 
 from datetime import datetime
 
-_trade_cooldown: dict[int, float] = {}  # entry_id → timestamp завершения трейда
-TRADE_COOLDOWN_SEC = 300  # 5 минут
+_last_event_id:    dict[int, int]   = {}  # user_id → последний обработанный event id
+_account_launch_ts: dict[str, float] = {}  # username.lower() → время account_launch
 from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
@@ -51,7 +51,7 @@ from api.accountsops import (
     get_account_pets, get_pets_batch,
     get_trackstats_accounts, get_all_accounts,
     set_accounts_enabled, set_accounts_config,
-    get_usernames_by_tag,
+    get_usernames_by_tag, get_events,
 )
 from api.faceunlock import submit_job, get_status
 
@@ -264,17 +264,30 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     farm_config_id  = cfg.get("farm_config_id")
     max_traders_per_server = cfg.get("batch_size") or 10
 
-    # Get live active accounts from dashboard — used to filter stuck detection
-    ok_d, dash, _ = await get_dashboard(ao_key)
-    active_usernames: set[str] = set()
-    if ok_d:
-        active_usernames = {
-            a["username"].lower()
-            for a in dash.get("active_accounts", [])
-            if a.get("username")
-        }
+    # Process new events — primary trade detection + launch tracking
+    ok_ev, events, _ = await get_events(ao_key, limit=50)
+    if ok_ev and events:
+        new_events = [e for e in events if e.get("id", 0) > _last_event_id.get(user_id, 0)]
+        if new_events:
+            _last_event_id[user_id] = max(e["id"] for e in new_events)
+            trading_map = {u.lower(): (eid, aid, u) for eid, aid, u in get_autopilot_trading_entries(user_id)}
+            farming_set = {u.lower() for _, _, u in get_autopilot_farming_entries(user_id)}
+            for event in reversed(new_events):
+                uname = (event.get("username") or "").lower()
+                kind  = event.get("kind", "")
+                msg   = event.get("message", "")
+                if kind == "kick" and "All trades completed" in msg and uname in trading_map:
+                    eid, aid, orig_u = trading_map.pop(uname)
+                    if farm_config_id:
+                        await set_accounts_config(ao_key, [orig_u], farm_config_id)
+                    await set_accounts_enabled(ao_key, [orig_u], True)
+                    set_autopilot_entry_status(eid, "farming")
+                    increment_autopilot_trades_done(user_id)
+                    add_autopilot_event(user_id, "trade_complete", orig_u)
+                elif kind == "account_launch" and uname in farming_set:
+                    _account_launch_ts[uname] = time.time()
 
-    # Check trading accounts — did they trade the pet?
+    # Fallback: inventory-based trade detection for accounts missed by events
     for entry_id, acc_id, username in get_autopilot_trading_entries(user_id):
         ok, pets, _ = await get_account_pets(ao_key, acc_id)
         if not ok:
@@ -286,7 +299,6 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             set_autopilot_entry_status(entry_id, "farming")
             increment_autopilot_trades_done(user_id)
             add_autopilot_event(user_id, "trade_complete", username)
-            _trade_cooldown[entry_id] = time.time()
 
     # Build fresh username→acc_id map from trackstats (avoids stale stored IDs)
     (_, ts_accounts, _), (_, raw_accounts, _) = await asyncio.gather(
@@ -348,7 +360,8 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     now_ts = time.time()
     ready_by_pet: dict[str, list] = {}
     for (entry_id, acc_id, username), fresh_id in zip(farming_entries, fresh_ids):
-        if now_ts - _trade_cooldown.get(entry_id, 0) < TRADE_COOLDOWN_SEC:
+        launch_ts = _account_launch_ts.get(username.lower(), 0)
+        if launch_ts > 0 and now_ts - launch_ts < 60:
             continue
         pet_counts: dict[str, int] = {}
         for p in (pets_map.get(fresh_id) or []):
@@ -532,9 +545,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.3 запущен ✅")
+    print("OxySync Bot v2.3.4 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.3</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.4</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
