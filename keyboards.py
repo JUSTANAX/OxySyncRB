@@ -53,6 +53,7 @@ def automation_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔄 AutoSwap",         callback_data="deviceswap")],
         [InlineKeyboardButton(text="✂️ Trim",             callback_data="devicetrim")],
         [InlineKeyboardButton(text="🤖 Авто-пилот",       callback_data="autopilot")],
+        [InlineKeyboardButton(text="💰 Авто-трейд",       callback_data="autotrade")],
         [InlineKeyboardButton(text="🔙 Назад",            callback_data="back")],
     ])
 
@@ -311,4 +312,55 @@ def cancel_kb(back_cb: str = "back") -> InlineKeyboardMarkup:
 def back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back")]
+    ])
+
+
+# ─── Авто-трейд ──────────────────────────────────────────────────────────────
+
+def autotrade_kb(config_id: int | None, account_count: int, running: bool) -> InlineKeyboardMarkup:
+    rows = []
+
+    cfg_label = f"⚙️ Конфиг: {config_id}" if config_id else "⚙️ Выбрать конфиг"
+    rows.append([InlineKeyboardButton(text=cfg_label, callback_data="at_set_config")])
+
+    if account_count > 0:
+        rows.append([
+            InlineKeyboardButton(text=f"👥 Аккаунты: {account_count}", callback_data="at_bulk_accounts"),
+            InlineKeyboardButton(text="➕",                             callback_data="at_add_account"),
+            InlineKeyboardButton(text="🗑",                             callback_data="at_clear"),
+        ])
+    else:
+        rows.append([
+            InlineKeyboardButton(text="📋 Добавить списком", callback_data="at_bulk_accounts"),
+            InlineKeyboardButton(text="➕ По одному",        callback_data="at_add_account"),
+        ])
+
+    if running:
+        rows.append([
+            InlineKeyboardButton(text="🔄 Обновить",   callback_data="at_refresh"),
+            InlineKeyboardButton(text="⏹ Остановить", callback_data="at_stop"),
+        ])
+    else:
+        rows.append([InlineKeyboardButton(text="▶️ Запустить", callback_data="at_start")])
+
+    rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="automation")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def at_configs_kb(configs: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for cfg in configs:
+        cfg_id   = cfg.get("id")
+        cfg_name = cfg.get("name") or str(cfg_id)
+        rows.append([InlineKeyboardButton(
+            text=f"⚙️ {cfg_name}",
+            callback_data=f"at_cfg:{cfg_id}",
+        )])
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="autotrade")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def cancel_to_at_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="autotrade")]
     ])
