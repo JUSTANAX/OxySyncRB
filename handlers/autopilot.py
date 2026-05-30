@@ -16,11 +16,10 @@ from database import (
     get_panel,
     get_autopilot_config,
     save_autopilot_main, save_autopilot_config_id, save_autopilot_farm_config_id,
-    save_autopilot_check_interval, save_autopilot_stuck_timeout, save_autopilot_batch_size,
+    save_autopilot_check_interval, save_autopilot_batch_size,
     set_autopilot_running, set_autopilot_started_at,
     get_autopilot_farming_entries, get_autopilot_trading_entries,
     get_autopilot_farming_count,
-    get_autopilot_stuck_entries,
     increment_autopilot_trades_done, get_autopilot_trades_done,
     add_autopilot_queue, clear_autopilot_queue,
     set_autopilot_entry_status,
@@ -41,7 +40,6 @@ class APStates(StatesGroup):
     waiting_pet_bulk       = State()
     waiting_pet_threshold  = State()
     waiting_check_interval = State()
-    waiting_stuck_timeout  = State()
     waiting_batch_size     = State()
 
 
@@ -65,7 +63,6 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     config_id      = cfg["config_id"]      if cfg else None
     farm_config_id = cfg["farm_config_id"] if cfg else None
     check_interval = cfg["check_interval"] if cfg else 30
-    stuck_timeout  = cfg["stuck_timeout"]  if cfg else 10
     batch_size     = cfg["batch_size"]     if cfg else 10
     trades_done    = cfg["trades_done"]    if cfg else 0
     ready_count    = cfg.get("ready_count", 0) if cfg else 0
@@ -80,9 +77,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
         rt = _runtime_str(started_at)
         farming_count   = get_autopilot_farming_count(user_id)
         trading_entries = get_autopilot_trading_entries(user_id)
-        stuck_entries   = get_autopilot_stuck_entries(user_id, stuck_timeout * 60)
         trading_count   = len(trading_entries)
-        stuck_count     = len(stuck_entries)
 
         rt_part = f"  ·  🕐 {rt}" if rt else ""
         lines.append(f"▶️ <b>Работает</b>{rt_part}")
@@ -92,10 +87,6 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
         lines.append(f"  🔄 Трейдит         <b>{trading_count}</b>")
         for _, _, u in trading_entries:
             lines.append(f"      · <code>{u}</code>")
-        if stuck_count:
-            lines.append(f"  ⏰ Зависших        <b>{stuck_count}</b> ⚠️")
-            for _, _, u in stuck_entries:
-                lines.append(f"      · <code>{u}</code>")
         lines.append(f"  ✅ Сделок всего    <b>{trades_done}</b>")
     else:
         lines.append("⏹ <b>Остановлен</b>")
@@ -123,9 +114,9 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     lines.append(f"🔄 Трейд конфиг: {trade_str}")
     lines.append(f"🌾 Фарм конфиг:  {farm_str}")
     lines.append("")
-    lines.append(f"⏱ Проверка: <b>{check_interval}с</b>  ·  ⏰ Стак: <b>{stuck_timeout}м</b>  ·  📊 Лимит: <b>{batch_size}</b>")
+    lines.append(f"⏱ Проверка: <b>{check_interval}с</b>  ·  📊 Лимит: <b>{batch_size}</b>")
 
-    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, farm_config_id, running, check_interval, stuck_timeout, batch_size)
+    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, farm_config_id, running, check_interval, batch_size)
 
 
 async def _show_autopilot(target, user_id: int, edit: bool = False):
@@ -298,49 +289,6 @@ async def ap_receive_interval(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❌ Введи число от 10 до 300 секунд:", reply_markup=cancel_to_ap_kb())
         return
     save_autopilot_check_interval(message.from_user.id, int(text))
-    await state.clear()
-    page_text, kb = _build_autopilot_page(message.from_user.id)
-    if prompt_msg_id:
-        try:
-            await bot.edit_message_text(
-                page_text, chat_id=message.chat.id, message_id=prompt_msg_id,
-                parse_mode="HTML", reply_markup=kb,
-            )
-            return
-        except TelegramBadRequest:
-            pass
-    await message.answer(page_text, parse_mode="HTML", reply_markup=kb)
-
-
-# ─── Задать стак-таймаут ─────────────────────────────────────────────────────
-
-@router.callback_query(lambda c: c.data == "ap_set_stuck")
-async def ap_set_stuck(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(APStates.waiting_stuck_timeout)
-    await state.update_data(prompt_msg_id=callback.message.message_id)
-    await callback.message.edit_text(
-        "⏰ Введи стак-таймаут (в минутах):\n\n"
-        "<i>Если аккаунт активен дольше этого времени без передачи пета — "
-        "он будет заменён следующим из очереди.\n"
-        "Допустимо от 1 до 60 минут. Рекомендуется: <code>10</code>.</i>",
-        parse_mode="HTML",
-        reply_markup=cancel_to_ap_kb(),
-    )
-    await callback.answer()
-
-
-@router.message(APStates.waiting_stuck_timeout)
-async def ap_receive_stuck(message: Message, state: FSMContext, bot: Bot):
-    if not message.text:
-        return
-    text = message.text.strip()
-    await message.delete()
-    data = await state.get_data()
-    prompt_msg_id = data.get("prompt_msg_id")
-    if not text.isdigit() or not (1 <= int(text) <= 60):
-        await message.answer("❌ Введи число от 1 до 60 минут:", reply_markup=cancel_to_ap_kb())
-        return
-    save_autopilot_stuck_timeout(message.from_user.id, int(text))
     await state.clear()
     page_text, kb = _build_autopilot_page(message.from_user.id)
     if prompt_msg_id:
@@ -683,7 +631,7 @@ async def ap_start(callback: CallbackQuery):
         await callback.message.edit_text(
             "🤖 <b>Авто-пилот</b>\n\n❌ Не удалось получить список аккаунтов.",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False, cfg.get("check_interval", 30), cfg.get("stuck_timeout", 10), cfg.get("batch_size", 10)),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False, cfg.get("check_interval", 30), cfg.get("batch_size", 10)),
         )
         return
 
@@ -719,7 +667,7 @@ async def ap_start(callback: CallbackQuery):
         await callback.message.edit_text(
             "🤖 <b>Авто-пилот</b>\n\nℹ️ Нет доступных аккаунтов для фарма.",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False, cfg.get("check_interval", 30), cfg.get("stuck_timeout", 10), cfg.get("batch_size", 10)),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False, cfg.get("check_interval", 30), cfg.get("batch_size", 10)),
         )
         return
 

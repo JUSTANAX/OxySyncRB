@@ -22,7 +22,6 @@ from database import (
     get_autopilot_farming_entries, get_autopilot_trading_entries,
     get_autopilot_trading_count,
     increment_autopilot_trades_done,
-    get_autopilot_stuck_entries,
     set_autopilot_entry_status,
     get_autopilot_pets,
     add_autopilot_event,
@@ -40,7 +39,6 @@ from handlers import autopilot
 from handlers import autoswap
 from handlers import deviceswap
 from handlers import devicetrim
-from handlers import autotrade
 from handlers.start import build_stats_text
 from keyboards import stats_kb
 from state_cache import get_all_stats_msgs, clear_stats_msg
@@ -280,39 +278,10 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         if not any(_pet_kind_matches(p.get("pet_kind", ""), pet_ids_set) for p in pets):
             if farm_config_id:
                 await set_accounts_config(ao_key, [username], farm_config_id)
-            await set_accounts_enabled(ao_key, [username], False)
             await set_accounts_enabled(ao_key, [username], True)
             set_autopilot_entry_status(entry_id, "farming")
             increment_autopilot_trades_done(user_id)
             add_autopilot_event(user_id, "trade_complete", username)
-
-    # Check stuck trading accounts — only flag if account is confirmed active in game
-    # (filters out accounts still in queue/joining phase)
-    stuck_timeout = cfg.get("stuck_timeout") or 10
-    stuck_raw = get_autopilot_stuck_entries(user_id, stuck_timeout * 60)
-    stuck = [
-        (eid, aid, u) for eid, aid, u in stuck_raw
-        if not active_usernames or u.lower() in active_usernames
-    ]
-    if stuck:
-        stuck_usernames = [username for _, _, username in stuck]
-        for entry_id, _, username in stuck:
-            if farm_config_id:
-                await set_accounts_config(ao_key, [username], farm_config_id)
-            await set_accounts_enabled(ao_key, [username], False)
-            await set_accounts_enabled(ao_key, [username], True)
-            set_autopilot_entry_status(entry_id, "farming")
-            add_autopilot_event(user_id, "stuck", username)
-        try:
-            lines = [f"⏰ <b>Авто-пилот</b> — зависшие аккаунты возвращены в фарм\n"]
-            lines.append(f"Без передачи пета >{stuck_timeout} мин: <b>{len(stuck_usernames)}</b>")
-            for u in stuck_usernames[:10]:
-                lines.append(f"• <code>{u}</code>")
-            if len(stuck_usernames) > 10:
-                lines.append(f"... и ещё {len(stuck_usernames) - 10}")
-            await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML")
-        except Exception as e:
-            logging.error("Stuck notify user=%s: %s", user_id, e)
 
     # Build fresh username→acc_id map from trackstats (avoids stale stored IDs)
     (_, ts_accounts, _), (_, raw_accounts, _) = await asyncio.gather(
@@ -545,7 +514,6 @@ async def main():
     dp.include_router(autoswap.router)
     dp.include_router(deviceswap.router)
     dp.include_router(devicetrim.router)
-    dp.include_router(autotrade.router)
     dp.include_router(start.router)
     asyncio.create_task(alert_loop(bot))
     asyncio.create_task(auto_unlock_loop(bot))
@@ -555,9 +523,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.0 запущен ✅")
+    print("OxySync Bot v2.3.1 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.0</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.1</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
