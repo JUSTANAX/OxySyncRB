@@ -1,3 +1,4 @@
+import re
 import asyncio
 import logging
 import time
@@ -17,6 +18,7 @@ from config import BOT_TOKEN, OWNER_ID, ACCOUNTSOPS_KEY, ZP_KEY
 from database import (
     init_db,
     save_panel, save_zp_key,
+    save_autopilot_main,
     get_users_with_alerts, update_alert_notified, set_alert_triggered,
     get_users_due_for_auto_unlock, update_auto_unlock_last_run,
     get_all_users_with_zp_jobs,
@@ -52,6 +54,7 @@ from api.accountsops import (
     get_trackstats_accounts, get_all_accounts,
     set_accounts_enabled, set_accounts_config,
     get_usernames_by_tag, get_events,
+    get_config_by_id, update_config,
 )
 from api.faceunlock import submit_job, get_status
 
@@ -245,6 +248,96 @@ def _find_matching_pid(kind: str, pet_ids_set: set[str]) -> str | None:
         if kind.endswith(f"_{pid}"):
             return pid
     return None
+
+
+def _patch_usernames(script: str, usernames: list[str]) -> str:
+    lua_list = "{" + ", ".join(f'"{u}"' for u in usernames) + "}"
+    return re.sub(r'(Usernames\s*=\s*)\{[^}]*\}', lambda m: m.group(1) + lua_list, script)
+
+
+async def check_and_swap_main(bot: Bot, user_id: int, ao_key: str):
+    cfg = get_autopilot_config(user_id)
+    if not cfg or not cfg.get("main_account") or not cfg.get("config_id"):
+        return
+    if not cfg.get("main_config_id"):
+        return
+
+    main_lower      = cfg["main_account"].lower()
+    threshold       = cfg.get("potion_threshold") or 8
+    trade_config_id = cfg["config_id"]
+    main_config_id  = cfg["main_config_id"]
+    farm_config_id  = cfg.get("farm_config_id")
+
+    ok, accounts, _ = await get_trackstats_accounts(ao_key)
+    if not ok:
+        return
+
+    main_potions = next(
+        (acc.get("potions") or 0 for acc in accounts
+         if (acc.get("username") or "").lower() == main_lower),
+        None,
+    )
+    if main_potions is None or main_potions >= threshold:
+        return
+
+    candidates = [
+        (acc.get("potions") or 0, acc.get("username"))
+        for acc in accounts
+        if (acc.get("username") or "").lower() != main_lower
+        and "status:valid" in (acc.get("tags") or [])
+        and acc.get("device_id")
+        and acc.get("folder_section") == "input"
+    ]
+    if not candidates:
+        return
+
+    candidates.sort(reverse=True)
+    new_main_potions, new_main = candidates[0]
+
+    ok_cfg, config_data, err_cfg = await get_config_by_id(ao_key, trade_config_id)
+    if not ok_cfg:
+        logging.error("Main swap get config user=%s: %s", user_id, err_cfg)
+        return
+
+    scripts = config_data.get("scripts") or []
+    config_data["scripts"] = [_patch_usernames(s, [new_main]) for s in scripts]
+
+    ok_put, _, err_put = await update_config(ao_key, trade_config_id, config_data)
+    if not ok_put:
+        logging.error("Main swap put config user=%s: %s", user_id, err_put)
+        return
+
+    old_main = cfg["main_account"]
+
+    if farm_config_id:
+        await set_accounts_config(ao_key, [old_main], farm_config_id)
+    await set_accounts_enabled(ao_key, [old_main], True)
+
+    await set_accounts_config(ao_key, [new_main], main_config_id)
+    await set_accounts_enabled(ao_key, [new_main], True)
+
+    save_autopilot_main(user_id, new_main)
+
+    try:
+        await bot.send_message(
+            user_id,
+            f"🔄 <b>Авто-пилот</b> — смена основного аккаунта\n\n"
+            f"Старый: <code>{old_main}</code> — {main_potions} зелий\n"
+            f"Новый: <code>{new_main}</code> — {new_main_potions} зелий",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logging.error("Main swap notify user=%s: %s", user_id, e)
+
+
+async def main_swap_loop(bot: Bot):
+    while True:
+        await asyncio.sleep(300)
+        for user_id, ao_key in get_users_with_autopilot_running():
+            try:
+                await check_and_swap_main(bot, user_id, ao_key)
+            except Exception as e:
+                logging.error("Main swap loop user=%s: %s", user_id, e)
 
 
 async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
@@ -542,12 +635,13 @@ async def main():
     asyncio.create_task(job_poller_loop(bot))
     asyncio.create_task(stats_refresh_loop(bot))
     asyncio.create_task(autopilot_transfer_loop(bot))
+    asyncio.create_task(main_swap_loop(bot))
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.4 запущен ✅")
+    print("OxySync Bot v2.3.5 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.4</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.5</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

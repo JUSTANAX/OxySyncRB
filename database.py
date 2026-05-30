@@ -292,6 +292,8 @@ def get_autopilot_config(user_id: int) -> dict | None:
         "last_checked_at":        row.get("last_checked_at"),
         "stuck_timeout":          row.get("stuck_timeout") or 10,
         "farm_config_id":         row.get("farm_config_id"),
+        "main_config_id":         row.get("main_config_id"),
+        "potion_threshold":       row.get("potion_threshold") or 8,
         "trades_done":            row.get("trades_done") or 0,
         "max_traders_per_server": row.get("max_traders_per_server") or 10,
         "ready_count":            row.get("ready_count") or 0,
@@ -460,6 +462,14 @@ def save_autopilot_stuck_timeout(user_id: int, minutes: int):
 
 def save_autopilot_farm_config_id(user_id: int, config_id: int):
     _upsert_config(user_id, {"farm_config_id": config_id})
+
+
+def save_autopilot_main_config_id(user_id: int, config_id: int):
+    _upsert_config(user_id, {"main_config_id": config_id})
+
+
+def save_autopilot_potion_threshold(user_id: int, threshold: int):
+    _upsert_config(user_id, {"potion_threshold": threshold})
 
 
 def get_autopilot_queue_usernames(user_id: int) -> set[str]:

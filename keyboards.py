@@ -88,6 +88,8 @@ def autopilot_kb(
     running: bool,
     check_interval: int = 30,
     batch_size: int = 10,
+    main_config_id: int | None = None,
+    potion_threshold: int = 8,
 ) -> InlineKeyboardMarkup:
     rows = []
 
@@ -96,16 +98,20 @@ def autopilot_kb(
 
     trade_cfg_label = f"🔄 Трейд конфиг: {config_id}" if config_id else "🔄 Трейд конфиг: не задан"
     farm_cfg_label  = f"🌾 Фарм конфиг: {farm_config_id}" if farm_config_id else "🌾 Фарм конфиг: не задан"
+    main_cfg_label  = f"👑 Конфиг мейна: {main_config_id}" if main_config_id else "👑 Конфиг мейна: не задан"
     interval_label  = f"⏱ Проверка: {check_interval}с"
     batch_label     = f"📊 Трейдеров: {batch_size}"
+    potion_label    = f"🧪 Порог зелий: {potion_threshold}"
 
     rows.append([InlineKeyboardButton(text=main_label,       callback_data="ap_set_main")])
     rows.append([InlineKeyboardButton(text=pet_label,        callback_data="ap_set_pet")])
     rows.append([InlineKeyboardButton(text=trade_cfg_label,  callback_data="ap_set_config")])
     rows.append([InlineKeyboardButton(text=farm_cfg_label,   callback_data="ap_set_farm_config")])
+    rows.append([InlineKeyboardButton(text=main_cfg_label,   callback_data="ap_set_main_config")])
     rows.append([
         InlineKeyboardButton(text=interval_label, callback_data="ap_set_interval"),
         InlineKeyboardButton(text=batch_label,    callback_data="ap_set_batch"),
+        InlineKeyboardButton(text=potion_label,   callback_data="ap_set_potion_threshold"),
     ])
 
     if running:
@@ -123,6 +129,19 @@ def autopilot_kb(
     rows.append([InlineKeyboardButton(text="🔍 Debug петов", callback_data="ap_debug")])
     rows.append([InlineKeyboardButton(text="🔧 Очистить очередь", callback_data="ap_cleanup_queue")])
     rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="automation")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def main_configs_kb(configs: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for cfg in configs:
+        cfg_id   = cfg.get("id")
+        cfg_name = cfg.get("name") or str(cfg_id)
+        rows.append([InlineKeyboardButton(
+            text=f"👑 {cfg_name}",
+            callback_data=f"ap_main_cfg:{cfg_id}",
+        )])
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="autopilot")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

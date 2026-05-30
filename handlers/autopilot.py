@@ -17,6 +17,7 @@ from database import (
     get_autopilot_config,
     save_autopilot_main, save_autopilot_config_id, save_autopilot_farm_config_id,
     save_autopilot_check_interval, save_autopilot_batch_size,
+    save_autopilot_main_config_id, save_autopilot_potion_threshold,
     set_autopilot_running, set_autopilot_started_at,
     get_autopilot_farming_entries, get_autopilot_trading_entries,
     get_autopilot_farming_count,
@@ -29,7 +30,7 @@ from database import (
     remove_autopilot_queue_entries,
     add_autopilot_event,
 )
-from keyboards import autopilot_kb, ap_pets_kb, ap_inventory_kb, cancel_to_ap_kb, configs_kb, farm_configs_kb, type_mask_label, _TYPE_MASKS
+from keyboards import autopilot_kb, ap_pets_kb, ap_inventory_kb, cancel_to_ap_kb, configs_kb, farm_configs_kb, main_configs_kb, type_mask_label, _TYPE_MASKS
 
 router = Router()
 
@@ -39,8 +40,9 @@ class APStates(StatesGroup):
     waiting_pet_id         = State()
     waiting_pet_bulk       = State()
     waiting_pet_threshold  = State()
-    waiting_check_interval = State()
-    waiting_batch_size     = State()
+    waiting_check_interval    = State()
+    waiting_batch_size        = State()
+    waiting_potion_threshold  = State()
 
 
 def _runtime_str(started_at: str | None) -> str:
@@ -62,8 +64,10 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     main_account   = cfg["main_account"]   if cfg else None
     config_id      = cfg["config_id"]      if cfg else None
     farm_config_id = cfg["farm_config_id"] if cfg else None
-    check_interval = cfg["check_interval"] if cfg else 30
-    batch_size     = cfg["batch_size"]     if cfg else 10
+    check_interval    = cfg["check_interval"]    if cfg else 30
+    batch_size        = cfg["batch_size"]        if cfg else 10
+    main_config_id    = cfg.get("main_config_id") if cfg else None
+    potion_threshold  = cfg.get("potion_threshold") or 8 if cfg else 8
     trades_done    = cfg["trades_done"]    if cfg else 0
     ready_count    = cfg.get("ready_count", 0) if cfg else 0
     started_at     = cfg["started_at"]     if cfg else None
@@ -114,9 +118,11 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     lines.append(f"🔄 Трейд конфиг: {trade_str}")
     lines.append(f"🌾 Фарм конфиг:  {farm_str}")
     lines.append("")
+    main_cfg_str = f"<code>{main_config_id}</code>" if main_config_id else "<i>не задан</i>"
+    lines.append(f"👑 Конфиг мейна: {main_cfg_str}  ·  🧪 Порог зелий: <b>{potion_threshold}</b>")
     lines.append(f"⏱ Проверка: <b>{check_interval}с</b>  ·  📊 Лимит: <b>{batch_size}</b>")
 
-    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, farm_config_id, running, check_interval, batch_size)
+    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, farm_config_id, running, check_interval, batch_size, main_config_id, potion_threshold)
 
 
 async def _show_autopilot(target, user_id: int, edit: bool = False):
@@ -259,6 +265,86 @@ async def ap_pick_farm_config(callback: CallbackQuery):
     save_autopilot_farm_config_id(callback.from_user.id, config_id)
     await callback.answer(f"✅ Фарм конфиг {config_id} сохранён")
     await _show_autopilot(callback.message, callback.from_user.id, edit=True)
+
+
+# ─── Конфиг мейна ────────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_set_main_config")
+async def ap_set_main_config(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    ao_key  = get_panel(user_id)
+    if not ao_key:
+        await callback.answer("❌ AccountsOps не подключён.", show_alert=True)
+        return
+    await callback.answer()
+    ok, configs, err = await get_configs(ao_key)
+    if not ok or not configs:
+        await callback.message.edit_text(
+            f"👑 <b>Конфиг мейна</b>\n\n❌ Не удалось загрузить: {err or 'список пуст'}",
+            parse_mode="HTML",
+            reply_markup=cancel_to_ap_kb(),
+        )
+        return
+    await callback.message.edit_text(
+        "👑 <b>Выбери конфиг для основного аккаунта</b>:",
+        parse_mode="HTML",
+        reply_markup=main_configs_kb(configs),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("ap_main_cfg:"))
+async def ap_pick_main_config(callback: CallbackQuery):
+    try:
+        config_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    save_autopilot_main_config_id(callback.from_user.id, config_id)
+    await callback.answer(f"✅ Конфиг мейна {config_id} сохранён")
+    await _show_autopilot(callback.message, callback.from_user.id, edit=True)
+
+
+# ─── Порог зелий ─────────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_set_potion_threshold")
+async def ap_set_potion_threshold(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(APStates.waiting_potion_threshold)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
+    await callback.message.edit_text(
+        "🧪 Введи порог зелий для смены основного аккаунта:\n\n"
+        "<i>Если у текущего мейна станет меньше этого кол-ва зелий — "
+        "бот автоматически сменит его на аккаунт с наибольшим запасом.\n"
+        "Допустимо от 1 до 9999.</i>",
+        parse_mode="HTML",
+        reply_markup=cancel_to_ap_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(APStates.waiting_potion_threshold)
+async def ap_receive_potion_threshold(message: Message, state: FSMContext, bot: Bot):
+    if not message.text:
+        return
+    text = message.text.strip()
+    await message.delete()
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    if not text.isdigit() or not (1 <= int(text) <= 9999):
+        await message.answer("❌ Введи число от 1 до 9999:", reply_markup=cancel_to_ap_kb())
+        return
+    save_autopilot_potion_threshold(message.from_user.id, int(text))
+    await state.clear()
+    page_text, kb = _build_autopilot_page(message.from_user.id)
+    if prompt_msg_id:
+        try:
+            await bot.edit_message_text(
+                page_text, chat_id=message.chat.id, message_id=prompt_msg_id,
+                parse_mode="HTML", reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            pass
+    await message.answer(page_text, parse_mode="HTML", reply_markup=kb)
 
 
 # ─── Задать интервал проверки ─────────────────────────────────────────────────
@@ -631,7 +717,7 @@ async def ap_start(callback: CallbackQuery):
         await callback.message.edit_text(
             "🤖 <b>Авто-пилот</b>\n\n❌ Не удалось получить список аккаунтов.",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False, cfg.get("check_interval", 30), cfg.get("batch_size", 10)),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False, cfg.get("check_interval", 30), cfg.get("batch_size", 10), cfg.get("main_config_id"), cfg.get("potion_threshold") or 8),
         )
         return
 
@@ -667,7 +753,7 @@ async def ap_start(callback: CallbackQuery):
         await callback.message.edit_text(
             "🤖 <b>Авто-пилот</b>\n\nℹ️ Нет доступных аккаунтов для фарма.",
             parse_mode="HTML",
-            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False, cfg.get("check_interval", 30), cfg.get("batch_size", 10)),
+            reply_markup=autopilot_kb(cfg["main_account"], pet_count, config_id, farm_config_id, False, cfg.get("check_interval", 30), cfg.get("batch_size", 10), cfg.get("main_config_id"), cfg.get("potion_threshold") or 8),
         )
         return
 

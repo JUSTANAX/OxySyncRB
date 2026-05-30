@@ -150,6 +150,15 @@ async def get_events(api_key: str, limit: int = 50) -> tuple[bool, list, str]:
     return True, data if isinstance(data, list) else [], ""
 
 
+async def get_config_by_id(api_key: str, config_id: int) -> tuple[bool, dict, str]:
+    ok, data, err = await _get(api_key, f"/api/player-configs/{config_id}")
+    return ok, data or {}, err
+
+
+async def update_config(api_key: str, config_id: int, config_data: dict) -> tuple[bool, any, str]:
+    return await _put(api_key, f"/api/player-configs/{config_id}?restart_running=false", config_data)
+
+
 async def get_trackstats_accounts(api_key: str) -> tuple[bool, list, str]:
     ok, data, err = await _get(api_key, "/api/trackstats/accounts")
     if not ok:
