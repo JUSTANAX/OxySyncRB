@@ -380,19 +380,6 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
                 elif kind == "account_launch" and uname in farming_set:
                     _account_launch_ts[uname] = time.time()
 
-    # Fallback: inventory-based trade detection for accounts missed by events
-    for entry_id, acc_id, username in get_autopilot_trading_entries(user_id):
-        ok, pets, _ = await get_account_pets(ao_key, acc_id)
-        if not ok:
-            continue
-        if not any(_pet_kind_matches(p.get("pet_kind", ""), pet_ids_set) for p in pets):
-            if farm_config_id:
-                await set_accounts_config(ao_key, [username], farm_config_id)
-            await set_accounts_enabled(ao_key, [username], True)
-            set_autopilot_entry_status(entry_id, "farming")
-            increment_autopilot_trades_done(user_id)
-            add_autopilot_event(user_id, "trade_complete", username)
-
     # Build fresh username→acc_id map from trackstats (avoids stale stored IDs)
     (_, ts_accounts, _), (_, raw_accounts, _) = await asyncio.gather(
         get_trackstats_accounts(ao_key),
@@ -409,6 +396,34 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         for acc in raw_accounts
         if (acc.get("device_id") or "").strip()
     }
+    # Accounts that were disabled by the game script after trading
+    disabled_set: set[str] = {
+        (acc.get("username") or acc.get("name") or "").strip().lower()
+        for acc in raw_accounts
+        if not acc.get("enabled", True)
+    }
+
+    # Fallback: trade detection for accounts missed by events
+    # Primary signal: account was disabled by the game script after trading
+    # Secondary signal: inventory no longer contains the target pet
+    for entry_id, acc_id, username in get_autopilot_trading_entries(user_id):
+        u = username.lower()
+        trade_done = False
+        if u in disabled_set:
+            # Game script disabled the account — trade is complete regardless of stale inventory
+            trade_done = True
+        else:
+            fresh_id = username_to_id.get(u, acc_id)
+            ok, pets, _ = await get_account_pets(ao_key, fresh_id)
+            if ok and not any(_pet_kind_matches(p.get("pet_kind", ""), pet_ids_set) for p in pets):
+                trade_done = True
+        if trade_done:
+            if farm_config_id:
+                await set_accounts_config(ao_key, [username], farm_config_id)
+            await set_accounts_enabled(ao_key, [username], True)
+            set_autopilot_entry_status(entry_id, "farming")
+            increment_autopilot_trades_done(user_id)
+            add_autopilot_event(user_id, "trade_complete", username)
 
     # Auto-enroll newly unblocked accounts not yet in queue
     main_lower = cfg["main_account"].lower()
@@ -639,9 +654,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.5 запущен ✅")
+    print("OxySync Bot v2.3.6 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.5</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.6</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
