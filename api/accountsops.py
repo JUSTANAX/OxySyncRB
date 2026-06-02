@@ -356,9 +356,10 @@ _DEAD_FACE_FOLDER = "Dead & Face"
 async def get_face_accounts(api_key: str) -> tuple[bool, list[str], str]:
     """Fetch face-lock accounts and format them for ZeroPoint.
 
-    Strategy (in order, stops when accounts with cookies are found):
-    1. "Dead & Face" folder → output section  (Sorting puts them there)
-    2. /api/accounts cross-referenced with status:face tag (fallback)
+    Collects face usernames from two sources:
+    1. "Dead & Face" folder → output section (Sorting puts them there)
+    2. status:face tag via /api/devices/accounts (device-assigned fallback)
+    Then fetches full account data from /api/accounts for cookie fields.
     Returns (ok, formatted_lines, err).
     """
     (ok_fld, folders, _), face_set = await asyncio.gather(
@@ -367,8 +368,10 @@ async def get_face_accounts(api_key: str) -> tuple[bool, list[str], str]:
     )
 
     formatted: list[str] = []
+    folder_face_names: set[str] = set()
 
-    # Strategy 1: "Dead & Face" folder → output section
+    # Collect usernames from Dead & Face folder → output section
+    # Also try direct format in case the folder API does return cookies
     if ok_fld:
         dead_face = next((f for f in folders if f.get("name") == _DEAD_FACE_FOLDER), None)
         if dead_face:
@@ -378,6 +381,9 @@ async def get_face_accounts(api_key: str) -> tuple[bool, list[str], str]:
                     section = (acc.get("section") or acc.get("folder_section") or "").lower()
                     if section != "output":
                         continue
+                    u = (acc.get("username") or acc.get("name") or "").strip().lower()
+                    if u:
+                        folder_face_names.add(u)
                     line = _format_for_zp(acc)
                     if line:
                         formatted.append(line)
@@ -385,25 +391,27 @@ async def get_face_accounts(api_key: str) -> tuple[bool, list[str], str]:
     if formatted:
         return True, formatted, ""
 
-    # Strategy 2: /api/accounts cross-referenced with face_set
+    # Merge folder names with tag-based set and fetch full account data for cookies
+    all_face_names = folder_face_names | face_set
+    if not all_face_names:
+        return True, [], ""
+
     ok_all, all_accounts, err_all = await get_all_accounts(api_key)
     if not ok_all:
-        if face_set:
-            return True, [], f"no_cookie:{len(face_set)}"
-        return False, [], err_all
+        return True, [], f"no_cookie:{len(all_face_names)}"
 
     for acc in all_accounts:
         u = (acc.get("username") or acc.get("name") or "").strip().lower()
         raw_tags = acc.get("tags") or []
         tag_strs = {str(t).lower() for t in raw_tags} if isinstance(raw_tags, list) else set()
-        if "status:face" not in tag_strs and u not in face_set:
+        if u not in all_face_names and "status:face" not in tag_strs:
             continue
         line = _format_for_zp(acc)
         if line:
             formatted.append(line)
 
-    if not formatted and face_set:
-        return True, [], f"no_cookie:{len(face_set)}"
+    if not formatted:
+        return True, [], f"no_cookie:{len(all_face_names)}"
 
     return True, formatted, ""
 
