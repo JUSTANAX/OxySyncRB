@@ -461,10 +461,12 @@ async def restart_accounts(api_key: str, usernames: list[str]) -> tuple[bool, an
     if not device_ids:
         return False, None, "Устройства не найдены."
 
+    if not usernames:
+        return True, None, ""
     CHUNK = 50
     last_err = ""
     for device_id in device_ids:
-        for i in range(0, max(len(usernames), 1), CHUNK):
+        for i in range(0, len(usernames), CHUNK):
             chunk = usernames[i:i + CHUNK]
             ok, _, err = await _post(api_key, f"/api/devices/{device_id}/restart-accounts", {"usernames": chunk})
             if not ok:
@@ -475,9 +477,11 @@ async def restart_accounts(api_key: str, usernames: list[str]) -> tuple[bool, an
 
 
 async def set_accounts_enabled(api_key: str, usernames: list[str], enabled: bool) -> tuple[bool, any, str]:
+    if not usernames:
+        return True, None, ""
     CHUNK = 50
     last_err = ""
-    for i in range(0, max(len(usernames), 1), CHUNK):
+    for i in range(0, len(usernames), CHUNK):
         chunk = usernames[i:i + CHUNK]
         ok, data, err = await _enable_chunk(api_key, chunk, enabled)
         if not ok:
@@ -488,9 +492,11 @@ async def set_accounts_enabled(api_key: str, usernames: list[str], enabled: bool
 
 
 async def set_accounts_config(api_key: str, usernames: list[str], config_id: int) -> tuple[bool, any, str]:
+    if not usernames:
+        return True, None, ""
     CHUNK = 50
     last_err = ""
-    for i in range(0, max(len(usernames), 1), CHUNK):
+    for i in range(0, len(usernames), CHUNK):
         chunk = usernames[i:i + CHUNK]
         ok, _, err = await _put(api_key, "/api/accounts/config", {"usernames": chunk, "config_id": config_id})
         if not ok:
@@ -698,9 +704,11 @@ async def move_accounts_to_folder(
 
 
 async def assign_accounts_to_device(api_key: str, device_id: str, usernames: list[str]) -> tuple[bool, any, str]:
+    if not usernames:
+        return True, None, ""
     CHUNK = 50
     last_err = ""
-    for i in range(0, max(len(usernames), 1), CHUNK):
+    for i in range(0, len(usernames), CHUNK):
         chunk = usernames[i:i + CHUNK]
         ok, _, err = await _put_2xx(api_key, "/api/accounts/device", {"device_id": device_id, "usernames": chunk})
         if not ok:
@@ -711,9 +719,11 @@ async def assign_accounts_to_device(api_key: str, device_id: str, usernames: lis
 
 
 async def unassign_accounts_from_device(api_key: str, device_id: str, usernames: list[str]) -> tuple[bool, any, str]:
+    if not usernames:
+        return True, None, ""
     CHUNK = 50
     last_err = ""
-    for i in range(0, max(len(usernames), 1), CHUNK):
+    for i in range(0, len(usernames), CHUNK):
         chunk = usernames[i:i + CHUNK]
         ok, _, err = await _put_2xx(api_key, f"/api/devices/{device_id}/unassign", {"usernames": chunk})
         if not ok:

@@ -805,7 +805,7 @@ async def ap_restart_trading(callback: CallbackQuery):
 
     ok, _, err = await restart_accounts(ao_key, usernames)
     if not ok:
-        await callback.answer(f"❌ {err}", show_alert=True)
+        await callback.message.answer(f"❌ Ошибка рестарта: {err}")
         return
 
     await _show_autopilot(callback.message, user_id, edit=True)
@@ -984,17 +984,17 @@ async def ap_cleanup_queue(callback: CallbackQuery):
         await callback.answer("❌ AccountsOps не подключён.", show_alert=True)
         return
 
-    await callback.answer("⏳ Проверяю...")
-    await callback.message.edit_text(
-        "🔧 <b>Очистка очереди</b>\n\n⏳ Получаю список девайсов...",
-        parse_mode="HTML",
-    )
-
     farming_entries = get_autopilot_farming_entries(user_id)
     if not farming_entries:
         await callback.answer("ℹ️ Очередь фармеров пуста.", show_alert=True)
         await _show_autopilot(callback.message, user_id, edit=True)
         return
+
+    await callback.answer("⏳ Проверяю...")
+    await callback.message.edit_text(
+        "🔧 <b>Очистка очереди</b>\n\n⏳ Получаю список девайсов...",
+        parse_mode="HTML",
+    )
 
     _, raw_accounts, _ = await get_all_accounts(ao_key)
     device_assigned: set[str] = {
