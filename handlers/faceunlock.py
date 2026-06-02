@@ -212,6 +212,9 @@ async def fu_run(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Уже есть активная задача!", show_alert=True)
             return
 
+    auto_enabled = get_auto_unlock(user_id)
+    interval     = get_auto_unlock_interval(user_id)
+
     await callback.answer("⏳")
     await callback.message.edit_text(
         "🔓 <b>Auto-Unlock-Face</b>\n\n"
@@ -224,7 +227,7 @@ async def fu_run(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(
             f"🔓 <b>Auto-Unlock-Face</b>\n\n❌ Ошибка AccountsOps: {err}",
             parse_mode="HTML",
-            reply_markup=fu_kb(None, []),
+            reply_markup=fu_kb(None, [], auto_enabled, interval),
         )
         return
 
@@ -242,7 +245,7 @@ async def fu_run(callback: CallbackQuery, state: FSMContext):
                 "🔓 <b>Auto-Unlock-Face</b>\n\n"
                 "✅ Аккаунтов с тегом <code>status:face</code> не найдено."
             )
-        await callback.message.edit_text(msg, parse_mode="HTML", reply_markup=fu_kb(None, []))
+        await callback.message.edit_text(msg, parse_mode="HTML", reply_markup=fu_kb(None, [], auto_enabled, interval))
         return
 
     await state.set_state(FUStates.confirming_run)
@@ -286,10 +289,12 @@ async def fu_confirm(callback: CallbackQuery, state: FSMContext):
             existing = result.get("existing_job_id")
             if existing:
                 save_zp_job(callback.from_user.id, existing)
+        auto_enabled = get_auto_unlock(callback.from_user.id)
+        interval     = get_auto_unlock_interval(callback.from_user.id)
         await callback.message.edit_text(
             f"🔓 <b>Auto-Unlock-Face</b>\n\n❌ Ошибка: {err}",
             parse_mode="HTML",
-            reply_markup=fu_kb(None, []),
+            reply_markup=fu_kb(None, [], auto_enabled, interval),
         )
         return
 

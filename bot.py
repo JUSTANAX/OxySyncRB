@@ -117,16 +117,16 @@ async def run_auto_unlock(bot: Bot):
         if not zp_key:
             continue
 
-        update_auto_unlock_last_run(user_id)
-
         job_id = get_zp_job(user_id)
         if job_id:
             ok_s, st, _ = await get_status(zp_key, job_id)
             if ok_s and st.get("status") in ("pending", "processing"):
+                update_auto_unlock_last_run(user_id)
                 continue
 
         ok, accounts, err = await get_face_accounts(ao_key)
         if not ok or not accounts:
+            update_auto_unlock_last_run(user_id)
             continue
 
         ok2, result, err2 = await submit_job(zp_key, "\n".join(accounts))
@@ -136,8 +136,10 @@ async def run_auto_unlock(bot: Bot):
                 if existing:
                     save_zp_job(user_id, existing)
             logging.warning("Auto-unlock submit user=%s: %s", user_id, err2)
+            update_auto_unlock_last_run(user_id)
             continue
 
+        update_auto_unlock_last_run(user_id)
         job_id = result.get("job_id")
         if job_id:
             save_zp_job(user_id, job_id)
@@ -654,9 +656,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.6 запущен ✅")
+    print("OxySync Bot v2.3.7 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.6</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.7</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
