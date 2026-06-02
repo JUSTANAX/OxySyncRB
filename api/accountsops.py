@@ -400,15 +400,32 @@ async def get_face_accounts(api_key: str) -> tuple[bool, list[str], str]:
     if not ok_all:
         return True, [], f"no_cookie:{len(all_face_names)}"
 
+    # Build name→id map and try bulk format first
+    face_id_map: dict[str, str] = {}
     for acc in all_accounts:
         u = (acc.get("username") or acc.get("name") or "").strip().lower()
         raw_tags = acc.get("tags") or []
         tag_strs = {str(t).lower() for t in raw_tags} if isinstance(raw_tags, list) else set()
-        if u not in all_face_names and "status:face" not in tag_strs:
+        is_face = u in all_face_names or "status:face" in tag_strs
+        if not is_face:
             continue
+        acc_id = str(acc.get("id") or "").strip()
+        if acc_id:
+            face_id_map[u] = acc_id
         line = _format_for_zp(acc)
         if line:
             formatted.append(line)
+
+    if formatted:
+        return True, formatted, ""
+
+    # Strategy 3: bulk endpoint had no cookies — try individual /api/accounts/{id}
+    if face_id_map:
+        individual = await _get_accounts_with_cookies(api_key, list(face_id_map.values()))
+        for acc in individual.values():
+            line = _format_for_zp(acc)
+            if line:
+                formatted.append(line)
 
     if not formatted:
         return True, [], f"no_cookie:{len(all_face_names)}"
@@ -618,6 +635,43 @@ async def get_totals(api_key: str) -> tuple[bool, dict, str]:
     money   = sum(int(acc.get("bucks",   0) or 0) for acc in accounts)
     potions = sum(int(acc.get("potions", 0) or 0) for acc in accounts)
     return True, {"money": money, "potions": potions}, ""
+
+
+async def _get_accounts_with_cookies(api_key: str, account_ids: list[str]) -> dict[str, dict]:
+    """Fetch individual accounts concurrently to get cookie data.
+    Returns {account_id: account_dict}."""
+    if not account_ids:
+        return {}
+    headers = {"X-Api-Key": api_key}
+    sem = asyncio.Semaphore(20)
+
+    async def _fetch(session: aiohttp.ClientSession, acc_id: str):
+        async with sem:
+            url = f"{ACCOUNTSOPS_URL}/api/accounts/{acc_id}"
+            try:
+                async with session.get(
+                    url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status != 200:
+                        return acc_id, {}
+                    body = await resp.json()
+                    return acc_id, (body if isinstance(body, dict) else {})
+            except Exception:
+                return acc_id, {}
+
+    connector = aiohttp.TCPConnector(limit=25, force_close=True)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        results = await asyncio.gather(
+            *[_fetch(session, aid) for aid in account_ids],
+            return_exceptions=True,
+        )
+    return {
+        aid: data
+        for r in results
+        if not isinstance(r, BaseException)
+        for aid, data in [r]
+        if data
+    }
 
 
 async def get_all_accounts(api_key: str) -> tuple[bool, list, str]:
