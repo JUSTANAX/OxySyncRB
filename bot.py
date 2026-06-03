@@ -17,6 +17,7 @@ import os
 from config import BOT_TOKEN, OWNER_ID, ACCOUNTSOPS_KEY, ZP_KEY
 from database import (
     init_db,
+    get_panel,
     save_panel, save_zp_key,
     save_autopilot_main,
     get_users_with_alerts, update_alert_notified, set_alert_triggered,
@@ -47,7 +48,7 @@ from handlers import deviceswap
 from handlers import devicetrim
 from handlers.start import build_stats_text
 from keyboards import stats_kb
-from state_cache import get_all_stats_msgs, clear_stats_msg
+from state_cache import get_all_stats_msgs, clear_stats_msg, save_zp_pending, pop_zp_pending
 from api.accountsops import (
     get_dashboard, get_face_accounts,
     get_account_pets, get_pets_batch,
@@ -55,8 +56,9 @@ from api.accountsops import (
     set_accounts_enabled, set_accounts_config,
     get_usernames_by_tag, get_events,
     get_config_by_id, update_config,
+    get_account_folders, create_folder, move_accounts_to_folder,
 )
-from api.faceunlock import submit_job, get_status
+from api.faceunlock import submit_job, get_status, download_file
 
 
 class OwnerOnly(BaseMiddleware):
@@ -143,6 +145,13 @@ async def run_auto_unlock(bot: Bot):
         job_id = result.get("job_id")
         if job_id:
             save_zp_job(user_id, job_id)
+            submitted = [
+                line.split(":")[0].strip()
+                for line in accounts
+                if ":" in line and not line.startswith("_|WARNING") and line.split(":")[0].strip()
+            ]
+            if submitted:
+                save_zp_pending(job_id, submitted)
             paid = result.get("paid_accounts_count", 0)
             est  = result.get("estimated_cost", 0.0)
             try:
@@ -166,12 +175,51 @@ async def auto_unlock_loop(bot: Bot):
             logging.error("Auto-unlock loop error: %s", e)
 
 
+_NO_DEVICE_FOLDER = "No Device"
+_ZP_SUCCESS_KEYWORDS = ("success", "unlock", "valid", "good", "working")
+
+
+async def _get_or_create_no_device_folder(ao_key: str) -> int | None:
+    ok, folders, _ = await get_account_folders(ao_key)
+    if ok:
+        folder = next((f for f in folders if f.get("name") == _NO_DEVICE_FOLDER), None)
+        if folder:
+            return folder["id"]
+    ok_cr, data, _ = await create_folder(ao_key, _NO_DEVICE_FOLDER)
+    return data.get("id") if ok_cr else None
+
+
+async def _parse_zp_success_usernames(zp_key: str, job_id: str, result_files: list[str]) -> list[str]:
+    """Download ZeroPoint success result file and extract usernames."""
+    success_file = next(
+        (f for f in result_files if any(kw in f.lower() for kw in _ZP_SUCCESS_KEYWORDS)),
+        None,
+    )
+    if not success_file:
+        return []
+    ok, raw, _ = await download_file(zp_key, job_id, success_file)
+    if not ok or not raw:
+        return []
+    usernames: list[str] = []
+    for line in raw.decode("utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(":")
+        if len(parts) >= 3:
+            username = parts[0].strip()
+            if username and not username.startswith("_|"):
+                usernames.append(username)
+    return usernames
+
+
 async def poll_job_completion(bot: Bot):
     for user_id, zp_key, job_id in get_all_users_with_zp_jobs():
         ok_s, st, err_s = await get_status(zp_key, job_id)
         if not ok_s:
             if err_s == "not_found":
                 clear_zp_job(user_id)
+                pop_zp_pending(job_id)
             continue
 
         status = st.get("status")
@@ -194,6 +242,24 @@ async def poll_job_completion(bot: Bot):
         lines.append(f"❌ Face ID не снят: <b>{failed}</b>")
         if other:
             lines.append(f"⚠️ Прочие ошибки: <b>{other}</b>")
+
+        pending_usernames = pop_zp_pending(job_id)
+
+        if status == "completed" and successful > 0:
+            ao_key = get_panel(user_id)
+            if ao_key:
+                result_files = st.get("result_files") or []
+                usernames_to_move = await _parse_zp_success_usernames(zp_key, job_id, result_files)
+                if not usernames_to_move:
+                    usernames_to_move = pending_usernames
+                if usernames_to_move:
+                    folder_id = await _get_or_create_no_device_folder(ao_key)
+                    if folder_id:
+                        ok_mv, _, err_mv = await move_accounts_to_folder(ao_key, usernames_to_move, folder_id)
+                        if ok_mv:
+                            lines.append(f"📂 Перенесено в No Device: <b>{len(usernames_to_move)}</b>")
+                        else:
+                            logging.error("Move to No Device user=%s: %s", user_id, err_mv)
 
         try:
             await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML")
@@ -656,9 +722,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.11 запущен ✅")
+    print("OxySync Bot v2.3.12 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.11</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.12</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

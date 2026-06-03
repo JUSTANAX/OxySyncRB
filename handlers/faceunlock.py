@@ -15,7 +15,7 @@ from database import (
     get_auto_unlock_interval, set_auto_unlock_interval,
 )
 from keyboards import automation_kb, fu_no_key_kb, fu_kb, fu_confirm_kb, cancel_to_fu_kb
-from state_cache import clear_stats_msg
+from state_cache import clear_stats_msg, save_zp_pending
 
 _INTERVAL_PRESETS = [1.0, 2.0, 3.0, 4.0, 6.0]
 
@@ -301,6 +301,13 @@ async def fu_confirm(callback: CallbackQuery, state: FSMContext):
     job_id = result.get("job_id")
     if job_id:
         save_zp_job(callback.from_user.id, job_id)
+        submitted = [
+            line.split(":")[0].strip()
+            for line in accounts_text.splitlines()
+            if ":" in line and not line.startswith("_|WARNING") and line.split(":")[0].strip()
+        ]
+        if submitted:
+            save_zp_pending(job_id, submitted)
 
     total    = result.get("total_accounts", 0)
     paid     = result.get("paid_accounts_count", 0)
