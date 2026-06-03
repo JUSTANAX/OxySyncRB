@@ -747,6 +747,34 @@ async def move_accounts_to_folder(
     return True, None, ""
 
 
+async def clear_accounts_status_tags(api_key: str, usernames: list[str]) -> tuple[bool, any, str]:
+    """Clear all status tags for accounts via POST /api/accounts/update-credentials."""
+    if not usernames:
+        return True, None, ""
+    creds = await get_accounts_credentials(api_key, usernames)
+    accounts_data = []
+    for acc in creds:
+        u = (acc.get("username") or acc.get("name") or "").strip()
+        p = (acc.get("password") or "").strip()
+        if u:
+            accounts_data.append({"username": u, "password": p})
+    if not accounts_data:
+        return False, None, "Не удалось получить данные аккаунтов"
+    CHUNK = 100
+    last_err = ""
+    for i in range(0, len(accounts_data), CHUNK):
+        chunk = accounts_data[i:i + CHUNK]
+        ok, _, err = await _post(api_key, "/api/accounts/update-credentials", {
+            "accounts": chunk,
+            "clear_status_tags": True,
+        })
+        if not ok:
+            last_err = err
+    if last_err:
+        return False, None, last_err
+    return True, None, ""
+
+
 async def assign_accounts_to_device(api_key: str, device_id: str, usernames: list[str]) -> tuple[bool, any, str]:
     if not usernames:
         return True, None, ""

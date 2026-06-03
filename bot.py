@@ -57,6 +57,7 @@ from api.accountsops import (
     get_usernames_by_tag, get_events,
     get_config_by_id, update_config,
     get_account_folders, create_folder, move_accounts_to_folder,
+    clear_accounts_status_tags,
 )
 from api.faceunlock import submit_job, get_status, download_file
 
@@ -258,6 +259,7 @@ async def poll_job_completion(bot: Bot):
                         ok_mv, _, err_mv = await move_accounts_to_folder(ao_key, usernames_to_move, folder_id)
                         if ok_mv:
                             lines.append(f"📂 Перенесено в No Device: <b>{len(usernames_to_move)}</b>")
+                            await clear_accounts_status_tags(ao_key, usernames_to_move)
                         else:
                             logging.error("Move to No Device user=%s: %s", user_id, err_mv)
 
@@ -722,9 +724,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.12 запущен ✅")
+    print("OxySync Bot v2.3.13 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.12</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.13</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
