@@ -783,11 +783,14 @@ async def ap_start(callback: CallbackQuery):
     if farm_config_id and already_active:
         await set_accounts_config(ao_key, [u for _, u in already_active], farm_config_id)
 
-    # Enable main + already-active farm accounts
+    # Apply main config and enable main + already-active farm accounts
+    main_config_id = cfg.get("main_config_id")
     await callback.message.edit_text(
         "🤖 <b>Авто-пилот</b>\n\n⏳ Включаю мейн и активных...",
         parse_mode="HTML",
     )
+    if main_config_id:
+        await set_accounts_config(ao_key, [cfg["main_account"]], main_config_id)
     await set_accounts_enabled(ao_key, [cfg["main_account"]], True)
     if already_active:
         await set_accounts_enabled(ao_key, [u for _, u in already_active], True)
