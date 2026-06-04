@@ -302,14 +302,12 @@ async def stats_refresh_loop(bot: Bot):
 
 
 def _pet_base_name(kind: str) -> str:
-    """Strip neon/mega_neon prefix and source_year prefix to get bare pet name.
-    e.g. mega_neon_basic_egg_2022_ancient_dragon → ancient_dragon
-         neon_dragon → dragon
+    """Strip source_year prefix to get bare pet name.
+    e.g. basic_egg_2022_ancient_dragon → ancient_dragon
+         starter_egg_2023_dragon → dragon
          dragon → dragon
     """
-    kind = re.sub(r'^(mega_neon_|neon_)', '', kind)
-    kind = re.sub(r'^.*_\d{4}_', '', kind)
-    return kind
+    return re.sub(r'^.*_\d{4}_', '', kind)
 
 
 def _pet_kind_matches(kind: str, pet_ids_set: set[str]) -> bool:
@@ -764,9 +762,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.16 запущен ✅")
+    print("OxySync Bot v2.3.17 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.16</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.17</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
