@@ -494,25 +494,22 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         if not acc.get("enabled", True)
     }
 
-    # Trade detection fallback (events mode) or primary (inventory mode)
+    # Trade detection: disabled by script (universal) + mode-specific fallback
     for entry_id, acc_id, username, activated_at in get_autopilot_trading_entries(user_id):
         u = username.lower()
         trade_done = False
-        detect_method = "inventory"
-        if trade_detect_mode == "inventory":
+        detect_method = "disabled"
+
+        if u in disabled_set:
+            # Script disabled the account — trade is done, this is the primary signal
+            trade_done = True
+        elif trade_detect_mode == "inventory":
             fresh_id = username_to_id.get(u, acc_id)
             ok, pets, _ = await get_account_pets(ao_key, fresh_id)
             if ok and not any(_pet_kind_matches(p.get("pet_kind", ""), pet_ids_set) for p in pets):
                 trade_done = True
-        else:
-            if u in disabled_set:
-                trade_done = True
-                detect_method = "disabled"
-            else:
-                fresh_id = username_to_id.get(u, acc_id)
-                ok, pets, _ = await get_account_pets(ao_key, fresh_id)
-                if ok and not any(_pet_kind_matches(p.get("pet_kind", ""), pet_ids_set) for p in pets):
-                    trade_done = True
+                detect_method = "inventory"
+
         if trade_done:
             if farm_config_id:
                 await set_accounts_config(ao_key, [username], farm_config_id)
@@ -779,9 +776,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.23 запущен ✅")
+    print("OxySync Bot v2.3.24 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.23</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.24</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
