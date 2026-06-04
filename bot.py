@@ -10,8 +10,21 @@ _last_event_id:    dict[int, int]   = {}  # user_id → последний об�
 _account_launch_ts: dict[str, float] = {}  # username.lower() → время account_launch
 _recently_traded_ts: dict[str, float] = {}  # username.lower() → время завершения трейда
 _trade_timing_log: list[dict] = []  # последние 30 завершённых трейдов
+_trade_debug_log:  list[dict] = []  # подробный лог событий трейда
 
-_TRADE_LOG_MAX = 30
+_TRADE_LOG_MAX   = 30
+_TRADE_DEBUG_MAX = 150
+
+
+def _tdlog(username: str, event: str, detail: str = ""):
+    _trade_debug_log.append({
+        "ts":       time.time(),
+        "username": username,
+        "event":    event,
+        "detail":   detail,
+    })
+    if len(_trade_debug_log) > _TRADE_DEBUG_MAX:
+        _trade_debug_log.pop(0)
 
 _TRADE_COOLDOWN = 300  # секунд игнорировать инвентарь после трейда
 
@@ -456,8 +469,11 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
                 uname = (event.get("username") or "").lower()
                 kind  = event.get("kind", "")
                 msg   = event.get("message", "")
+                if kind == "kick" and uname in trading_map:
+                    _tdlog(uname, "kick", msg[:120])
                 if kind == "kick" and ("account disabled" in msg or "All trades completed" in msg) and uname in trading_map:
                     eid, aid, orig_u, activated_at = trading_map.pop(uname)
+                    _tdlog(orig_u, "detect", "events → disable+config+enable")
                     await set_accounts_enabled(ao_key, [orig_u], False)
                     if farm_config_id:
                         await set_accounts_config(ao_key, [orig_u], farm_config_id)
@@ -467,6 +483,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
                     add_autopilot_event(user_id, "trade_complete", orig_u)
                     _recently_traded_ts[uname] = time.time()
                     _log_trade(orig_u, activated_at, "events")
+                    _tdlog(orig_u, "→farm", f"config={farm_config_id}")
                 elif kind == "account_launch" and uname in farming_set:
                     event_age = time.time() - (event.get("ts_millis") or 0) / 1000
                     if event_age < 120:
@@ -502,16 +519,20 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         detect_method = "disabled"
 
         if u in disabled_set:
-            # Script disabled the account — trade is done, this is the primary signal
             trade_done = True
+            _tdlog(username, "detect", "disabled_set → script disabled account")
         elif trade_detect_mode == "inventory":
             fresh_id = username_to_id.get(u, acc_id)
             ok, pets, _ = await get_account_pets(ao_key, fresh_id)
             if ok and not any(_pet_kind_matches(p.get("pet_kind", ""), pet_ids_set) for p in pets):
                 trade_done = True
                 detect_method = "inventory"
+                _tdlog(username, "detect", "inventory → pet gone")
+            elif not ok:
+                _tdlog(username, "warn", "inventory check failed (API error)")
 
         if trade_done:
+            _tdlog(username, "action", "disable → set_config → enable")
             await set_accounts_enabled(ao_key, [username], False)
             if farm_config_id:
                 await set_accounts_config(ao_key, [username], farm_config_id)
@@ -633,6 +654,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             await set_accounts_enabled(ao_key, [username], True)
             set_autopilot_entry_status(entry_id, "trading")
             add_autopilot_event(user_id, "got_pet", username)
+            _tdlog(username, "→trade", f"pet={pid} config={trade_config_id}")
             promoted.add(entry_id)
             current_trading += 1
 
@@ -778,9 +800,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.25 запущен ✅")
+    print("OxySync Bot v2.3.26 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.25</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.26</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

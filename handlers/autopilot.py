@@ -1228,6 +1228,54 @@ async def ap_timing(callback: CallbackQuery):
         pass
 
 
+# ─── Лог трейдов ─────────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_trade_log")
+async def ap_trade_log(callback: CallbackQuery):
+    import bot as _bot
+    import time as _time
+    await callback.answer()
+
+    log = list(reversed(_bot._trade_debug_log))
+    if not log:
+        await callback.message.edit_text(
+            "🪵 <b>Лог трейдов</b>\n\n<i>Пусто — событий ещё не было с момента запуска бота</i>",
+            parse_mode="HTML",
+            reply_markup=ap_inventory_kb(),
+        )
+        return
+
+    EVENT_ICON = {
+        "→trade":  "🔵",
+        "kick":    "⚡️",
+        "detect":  "🟢",
+        "action":  "🔧",
+        "→farm":   "✅",
+        "warn":    "⚠️",
+    }
+
+    now = _time.time()
+    lines = ["🪵 <b>Лог трейдов</b> (последние 40)\n"]
+    for entry in log[:40]:
+        ago = int(now - entry["ts"])
+        if ago < 60:
+            t = f"{ago}с"
+        else:
+            m, s = divmod(ago, 60)
+            t = f"{m}м{s}с"
+        icon   = EVENT_ICON.get(entry["event"], "•")
+        name   = entry["username"]
+        if len(name) > 16:
+            name = name[:14] + "…"
+        detail = f"  <i>{entry['detail'][:60]}</i>" if entry["detail"] else ""
+        lines.append(f"{icon} <code>{name}</code> [{t} назад]{detail}")
+
+    try:
+        await callback.message.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=ap_inventory_kb())
+    except TelegramBadRequest:
+        pass
+
+
 # ─── Остановка ────────────────────────────────────────────────────────────────
 
 @router.callback_query(lambda c: c.data == "ap_stop")
