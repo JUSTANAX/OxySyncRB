@@ -9,8 +9,30 @@ from datetime import datetime
 _last_event_id:    dict[int, int]   = {}  # user_id → последний обработанный event id
 _account_launch_ts: dict[str, float] = {}  # username.lower() → время account_launch
 _recently_traded_ts: dict[str, float] = {}  # username.lower() → время завершения трейда
+_trade_timing_log: list[dict] = []  # последние 30 завершённых трейдов
+
+_TRADE_LOG_MAX = 30
 
 _TRADE_COOLDOWN = 300  # секунд игнорировать инвентарь после трейда
+
+
+def _log_trade(username: str, activated_at: str | None, method: str):
+    now = time.time()
+    duration = None
+    if activated_at:
+        try:
+            started = datetime.strptime(activated_at.replace("Z", "").split("+")[0], "%Y-%m-%dT%H:%M:%S")
+            duration = int((datetime.utcnow() - started).total_seconds())
+        except Exception:
+            pass
+    _trade_timing_log.append({
+        "username": username,
+        "duration": duration,
+        "method":   method,
+        "ts":       now,
+    })
+    if len(_trade_timing_log) > _TRADE_LOG_MAX:
+        _trade_timing_log.pop(0)
 from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
@@ -428,14 +450,14 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         new_events = [e for e in events if e.get("id", 0) > _last_event_id.get(user_id, 0)]
         if new_events:
             _last_event_id[user_id] = max(e["id"] for e in new_events)
-            trading_map = {u.lower(): (eid, aid, u) for eid, aid, u in get_autopilot_trading_entries(user_id)}
+            trading_map = {u.lower(): (eid, aid, u, act) for eid, aid, u, act in get_autopilot_trading_entries(user_id)}
             farming_set = {u.lower() for _, _, u in get_autopilot_farming_entries(user_id)}
             for event in reversed(new_events):
                 uname = (event.get("username") or "").lower()
                 kind  = event.get("kind", "")
                 msg   = event.get("message", "")
                 if kind == "kick" and ("account disabled" in msg or "All trades completed" in msg) and uname in trading_map:
-                    eid, aid, orig_u = trading_map.pop(uname)
+                    eid, aid, orig_u, activated_at = trading_map.pop(uname)
                     if farm_config_id:
                         await set_accounts_config(ao_key, [orig_u], farm_config_id)
                     await set_accounts_enabled(ao_key, [orig_u], True)
@@ -443,6 +465,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
                     increment_autopilot_trades_done(user_id)
                     add_autopilot_event(user_id, "trade_complete", orig_u)
                     _recently_traded_ts[uname] = time.time()
+                    _log_trade(orig_u, activated_at, "events")
                 elif kind == "account_launch" and uname in farming_set:
                     event_age = time.time() - (event.get("ts_millis") or 0) / 1000
                     if event_age < 120:
@@ -472,19 +495,19 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     }
 
     # Trade detection fallback (events mode) or primary (inventory mode)
-    for entry_id, acc_id, username in get_autopilot_trading_entries(user_id):
+    for entry_id, acc_id, username, activated_at in get_autopilot_trading_entries(user_id):
         u = username.lower()
         trade_done = False
+        detect_method = "inventory"
         if trade_detect_mode == "inventory":
-            # Inventory mode: pet gone = trade done, no events needed
             fresh_id = username_to_id.get(u, acc_id)
             ok, pets, _ = await get_account_pets(ao_key, fresh_id)
             if ok and not any(_pet_kind_matches(p.get("pet_kind", ""), pet_ids_set) for p in pets):
                 trade_done = True
         else:
-            # Events mode fallback: disabled by script OR pet gone
             if u in disabled_set:
                 trade_done = True
+                detect_method = "disabled"
             else:
                 fresh_id = username_to_id.get(u, acc_id)
                 ok, pets, _ = await get_account_pets(ao_key, fresh_id)
@@ -498,6 +521,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             increment_autopilot_trades_done(user_id)
             add_autopilot_event(user_id, "trade_complete", username)
             _recently_traded_ts[u] = time.time()
+            _log_trade(username, activated_at, detect_method)
 
     # Auto-enroll newly unblocked accounts not yet in queue
     main_lower = cfg["main_account"].lower()
@@ -755,9 +779,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.22 запущен ✅")
+    print("OxySync Bot v2.3.23 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.22</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.23</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

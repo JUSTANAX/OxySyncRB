@@ -130,6 +130,7 @@ def autopilot_kb(
         rows.append([InlineKeyboardButton(text="📦 Инвентарь осн. аккаунта", callback_data="ap_inventory")])
     rows.append([InlineKeyboardButton(text="♻️ Перезапустить все аккаунты", callback_data="ap_restart_all")])
     rows.append([InlineKeyboardButton(text="🔍 Debug петов", callback_data="ap_debug")])
+    rows.append([InlineKeyboardButton(text="⏱ Тайминг трейдов", callback_data="ap_timing")])
     rows.append([InlineKeyboardButton(text="🔧 Очистить очередь", callback_data="ap_cleanup_queue")])
     rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="automation")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -491,8 +491,8 @@ def get_autopilot_farming_entries(user_id: int) -> list[tuple]:
 
 def get_autopilot_trading_entries(user_id: int) -> list[tuple]:
     c = _get_client()
-    result = c.table("autopilot_queue").select("id, account_id, username").eq("user_id", user_id).eq("status", "trading").order("id").execute()
-    return [(r["id"], r["account_id"], r["username"]) for r in result.data]
+    result = c.table("autopilot_queue").select("id, account_id, username, activated_at").eq("user_id", user_id).eq("status", "trading").order("id").execute()
+    return [(r["id"], r["account_id"], r["username"], r.get("activated_at")) for r in result.data]
 
 
 def get_autopilot_farming_count(user_id: int) -> int:

@@ -83,7 +83,8 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     if running:
         rt = _runtime_str(started_at)
         farming_count   = get_autopilot_farming_count(user_id)
-        trading_entries = get_autopilot_trading_entries(user_id)
+        trading_entries_raw = get_autopilot_trading_entries(user_id)
+        trading_entries = [(eid, aid, u) for eid, aid, u, *_ in trading_entries_raw]
         trading_count   = len(trading_entries)
         inactive_count  = get_autopilot_inactive_count(user_id)
 
@@ -846,7 +847,7 @@ async def ap_restart_trading(callback: CallbackQuery):
         await callback.answer("ℹ️ Нет аккаунтов в трейде.", show_alert=True)
         return
 
-    usernames = [u for _, _, u in trading]
+    usernames = [u for _, _, u, *_ in trading]
     await callback.answer(f"⚡️ Рестарт {len(usernames)} трейдеров...")
 
     ok, _, err = await restart_accounts(ao_key, usernames)
@@ -1173,6 +1174,60 @@ async def ap_debug(callback: CallbackQuery):
         pass
 
 
+# ─── Тайминг трейдов ─────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "ap_timing")
+async def ap_timing(callback: CallbackQuery):
+    import bot as _bot
+    await callback.answer()
+
+    log = list(reversed(_bot._trade_timing_log))
+    trading_entries = get_autopilot_trading_entries(callback.from_user.id)
+
+    lines = ["⏱ <b>Тайминг трейдов</b>", ""]
+
+    if trading_entries:
+        lines.append("<b>Сейчас в трейде:</b>")
+        from datetime import datetime
+        now = datetime.utcnow()
+        for _, _, username, activated_at in trading_entries:
+            if activated_at:
+                try:
+                    started = datetime.strptime(activated_at.replace("Z", "").split("+")[0], "%Y-%m-%dT%H:%M:%S")
+                    elapsed = int((now - started).total_seconds())
+                    m, s = divmod(elapsed, 60)
+                    time_str = f"{m}м {s}с" if m else f"{s}с"
+                except Exception:
+                    time_str = "?"
+            else:
+                time_str = "?"
+            lines.append(f"  · <code>{username}</code> — {time_str}")
+        lines.append("")
+
+    if log:
+        lines.append("<b>Последние завершённые:</b>")
+        method_icon = {"events": "⚡️", "disabled": "🔴", "inventory": "📦"}
+        for entry in log[:20]:
+            dur = entry["duration"]
+            m, s = divmod(dur, 60) if dur is not None else (0, 0)
+            dur_str = (f"{m}м {s}с" if m else f"{s}с") if dur is not None else "?"
+            icon = method_icon.get(entry["method"], "❓")
+            name = entry["username"]
+            if len(name) > 18:
+                name = name[:16] + "…"
+            lines.append(f"  {icon} <code>{name}</code> — {dur_str}")
+    else:
+        lines.append("<i>Нет данных — трейды ещё не завершались с момента запуска бота</i>")
+
+    lines.append("")
+    lines.append("<i>⚡️ события  🔴 отключён скриптом  📦 инвентарь</i>")
+
+    try:
+        await callback.message.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=ap_inventory_kb())
+    except TelegramBadRequest:
+        pass
+
+
 # ─── Остановка ────────────────────────────────────────────────────────────────
 
 @router.callback_query(lambda c: c.data == "ap_stop")
@@ -1188,7 +1243,7 @@ async def ap_stop(callback: CallbackQuery):
         trading  = get_autopilot_trading_entries(user_id)
         all_entries = farming + trading
         if all_entries:
-            await set_accounts_enabled(ao_key, [u for _, _, u in all_entries], False)
+            await set_accounts_enabled(ao_key, [u for _, _, u, *_ in all_entries], False)
         if cfg and cfg["main_account"]:
             await set_accounts_enabled(ao_key, [cfg["main_account"]], False)
 
