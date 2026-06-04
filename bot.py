@@ -468,6 +468,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
                     await set_accounts_enabled(ao_key, [orig_u], False)
                     if farm_config_id:
                         await set_accounts_config(ao_key, [orig_u], farm_config_id)
+                    await asyncio.sleep(7)
                     await set_accounts_enabled(ao_key, [orig_u], True)
                     set_autopilot_entry_status(eid, "farming")
                     increment_autopilot_trades_done(user_id)
@@ -532,6 +533,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             await set_accounts_enabled(ao_key, [username], False)
             if farm_config_id:
                 await set_accounts_config(ao_key, [username], farm_config_id)
+            await asyncio.sleep(7)
             await set_accounts_enabled(ao_key, [username], True)
             set_autopilot_entry_status(entry_id, "farming")
             increment_autopilot_trades_done(user_id)
@@ -801,9 +803,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.29 запущен ✅")
+    print("OxySync Bot v2.3.30 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.29</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.30</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
