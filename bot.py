@@ -8,6 +8,9 @@ from datetime import datetime
 
 _last_event_id:    dict[int, int]   = {}  # user_id → последний обработанный event id
 _account_launch_ts: dict[str, float] = {}  # username.lower() → время account_launch
+_recently_traded_ts: dict[str, float] = {}  # username.lower() → время завершения трейда
+
+_TRADE_COOLDOWN = 300  # секунд игнорировать инвентарь после трейда
 from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
@@ -429,7 +432,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
                 uname = (event.get("username") or "").lower()
                 kind  = event.get("kind", "")
                 msg   = event.get("message", "")
-                if kind == "kick" and "All trades completed" in msg and uname in trading_map:
+                if kind == "kick" and ("account disabled" in msg or "All trades completed" in msg) and uname in trading_map:
                     eid, aid, orig_u = trading_map.pop(uname)
                     if farm_config_id:
                         await set_accounts_config(ao_key, [orig_u], farm_config_id)
@@ -437,6 +440,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
                     set_autopilot_entry_status(eid, "farming")
                     increment_autopilot_trades_done(user_id)
                     add_autopilot_event(user_id, "trade_complete", orig_u)
+                    _recently_traded_ts[uname] = time.time()
                 elif kind == "account_launch" and uname in farming_set:
                     _account_launch_ts[uname] = time.time()
 
@@ -484,6 +488,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             set_autopilot_entry_status(entry_id, "farming")
             increment_autopilot_trades_done(user_id)
             add_autopilot_event(user_id, "trade_complete", username)
+            _recently_traded_ts[u] = time.time()
 
     # Auto-enroll newly unblocked accounts not yet in queue
     main_lower = cfg["main_account"].lower()
@@ -741,9 +746,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.18 запущен ✅")
+    print("OxySync Bot v2.3.19 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.18</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.19</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
