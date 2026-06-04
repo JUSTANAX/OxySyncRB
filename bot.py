@@ -458,6 +458,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
                 msg   = event.get("message", "")
                 if kind == "kick" and ("account disabled" in msg or "All trades completed" in msg) and uname in trading_map:
                     eid, aid, orig_u, activated_at = trading_map.pop(uname)
+                    await set_accounts_enabled(ao_key, [orig_u], False)
                     if farm_config_id:
                         await set_accounts_config(ao_key, [orig_u], farm_config_id)
                     await set_accounts_enabled(ao_key, [orig_u], True)
@@ -511,6 +512,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
                 detect_method = "inventory"
 
         if trade_done:
+            await set_accounts_enabled(ao_key, [username], False)
             if farm_config_id:
                 await set_accounts_config(ao_key, [username], farm_config_id)
             await set_accounts_enabled(ao_key, [username], True)
@@ -776,9 +778,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.24 запущен ✅")
+    print("OxySync Bot v2.3.25 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.24</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.25</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
