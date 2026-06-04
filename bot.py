@@ -301,12 +301,23 @@ async def stats_refresh_loop(bot: Bot):
                 clear_stats_msg(user_id)
 
 
+def _pet_base_name(kind: str) -> str:
+    """Strip neon/mega_neon prefix and source_year prefix to get bare pet name.
+    e.g. mega_neon_basic_egg_2022_ancient_dragon → ancient_dragon
+         neon_dragon → dragon
+         dragon → dragon
+    """
+    kind = re.sub(r'^(mega_neon_|neon_)', '', kind)
+    kind = re.sub(r'^.*_\d{4}_', '', kind)
+    return kind
+
+
 def _pet_kind_matches(kind: str, pet_ids_set: set[str]) -> bool:
     if not kind:
         return False
     if kind in pet_ids_set:
         return True
-    return any(kind.endswith(f"_{pid}") for pid in pet_ids_set)
+    return _pet_base_name(kind) in pet_ids_set
 
 
 def _find_matching_pid(kind: str, pet_ids_set: set[str]) -> str | None:
@@ -315,9 +326,9 @@ def _find_matching_pid(kind: str, pet_ids_set: set[str]) -> str | None:
         return None
     if kind in pet_ids_set:
         return kind
-    for pid in pet_ids_set:
-        if kind.endswith(f"_{pid}"):
-            return pid
+    base = _pet_base_name(kind)
+    if base in pet_ids_set:
+        return base
     return None
 
 
@@ -753,9 +764,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.15 запущен ✅")
+    print("OxySync Bot v2.3.16 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.15</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.16</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
