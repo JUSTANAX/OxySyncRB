@@ -421,7 +421,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
 
     # Process new events — primary trade detection + launch tracking
     new_events: list = []
-    ok_ev, events, _ = await get_events(ao_key, limit=50)
+    ok_ev, events, _ = await get_events(ao_key, limit=500)
     if ok_ev and events:
         new_events = [e for e in events if e.get("id", 0) > _last_event_id.get(user_id, 0)]
         if new_events:
@@ -746,9 +746,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.19 запущен ✅")
+    print("OxySync Bot v2.3.20 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.19</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.20</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
