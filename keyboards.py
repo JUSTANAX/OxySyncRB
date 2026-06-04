@@ -90,6 +90,7 @@ def autopilot_kb(
     batch_size: int = 10,
     main_config_id: int | None = None,
     potion_threshold: int = 8,
+    trade_detect_mode: str = "events",
 ) -> InlineKeyboardMarkup:
     rows = []
 
@@ -102,6 +103,7 @@ def autopilot_kb(
     interval_label  = f"⏱ Проверка: {check_interval}с"
     batch_label     = f"📊 Трейдеров: {batch_size}"
     potion_label    = f"🧪 Порог зелий: {potion_threshold}"
+    detect_label    = "🎯 Детект: События" if trade_detect_mode == "events" else "📦 Детект: Инвентарь"
 
     rows.append([InlineKeyboardButton(text=main_label,       callback_data="ap_set_main")])
     rows.append([InlineKeyboardButton(text=pet_label,        callback_data="ap_set_pet")])
@@ -113,6 +115,7 @@ def autopilot_kb(
         InlineKeyboardButton(text=batch_label,    callback_data="ap_set_batch"),
         InlineKeyboardButton(text=potion_label,   callback_data="ap_set_potion_threshold"),
     ])
+    rows.append([InlineKeyboardButton(text=detect_label, callback_data="ap_toggle_detect")])
 
     if running:
         rows.append([

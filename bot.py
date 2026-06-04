@@ -39,6 +39,7 @@ from database import (
     get_autopilot_queue_usernames,
     add_autopilot_queue,
     get_autopilot_inactive_entries,
+    get_autopilot_stuck_entries,
     get_users_due_for_autoswap,
     get_autoswap_config as get_autoswap_cfg,
     get_users_due_for_deviceswap,
@@ -415,9 +416,10 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         for _, pid, min_count, age_min, age_max, type_mask in pet_rows
     }
     pet_ids_set     = set(pet_configs.keys())
-    trade_config_id = cfg.get("config_id")
-    farm_config_id  = cfg.get("farm_config_id")
+    trade_config_id    = cfg.get("config_id")
+    farm_config_id     = cfg.get("farm_config_id")
     max_traders_per_server = cfg.get("batch_size") or 10
+    trade_detect_mode  = cfg.get("trade_detect_mode") or "events"
 
     # Process new events — primary trade detection + launch tracking
     new_events: list = []
@@ -469,20 +471,25 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
         if not acc.get("enabled", True)
     }
 
-    # Fallback: trade detection for accounts missed by events
-    # Primary signal: account was disabled by the game script after trading
-    # Secondary signal: inventory no longer contains the target pet
+    # Trade detection fallback (events mode) or primary (inventory mode)
     for entry_id, acc_id, username in get_autopilot_trading_entries(user_id):
         u = username.lower()
         trade_done = False
-        if u in disabled_set:
-            # Game script disabled the account — trade is complete regardless of stale inventory
-            trade_done = True
-        else:
+        if trade_detect_mode == "inventory":
+            # Inventory mode: pet gone = trade done, no events needed
             fresh_id = username_to_id.get(u, acc_id)
             ok, pets, _ = await get_account_pets(ao_key, fresh_id)
             if ok and not any(_pet_kind_matches(p.get("pet_kind", ""), pet_ids_set) for p in pets):
                 trade_done = True
+        else:
+            # Events mode fallback: disabled by script OR pet gone
+            if u in disabled_set:
+                trade_done = True
+            else:
+                fresh_id = username_to_id.get(u, acc_id)
+                ok, pets, _ = await get_account_pets(ao_key, fresh_id)
+                if ok and not any(_pet_kind_matches(p.get("pet_kind", ""), pet_ids_set) for p in pets):
+                    trade_done = True
         if trade_done:
             if farm_config_id:
                 await set_accounts_config(ao_key, [username], farm_config_id)
@@ -748,9 +755,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.21 запущен ✅")
+    print("OxySync Bot v2.3.22 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.21</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.22</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

@@ -297,6 +297,7 @@ def get_autopilot_config(user_id: int) -> dict | None:
         "trades_done":            row.get("trades_done") or 0,
         "max_traders_per_server": row.get("max_traders_per_server") or 10,
         "ready_count":            row.get("ready_count") or 0,
+        "trade_detect_mode":      row.get("trade_detect_mode") or "events",
     }
 
 
@@ -470,6 +471,10 @@ def save_autopilot_main_config_id(user_id: int, config_id: int):
 
 def save_autopilot_potion_threshold(user_id: int, threshold: int):
     _upsert_config(user_id, {"potion_threshold": threshold})
+
+
+def save_autopilot_trade_detect_mode(user_id: int, mode: str):
+    _upsert_config(user_id, {"trade_detect_mode": mode})
 
 
 def get_autopilot_queue_usernames(user_id: int) -> set[str]:

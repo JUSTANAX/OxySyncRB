@@ -30,6 +30,7 @@ from database import (
     remove_autopilot_queue_entries,
     add_autopilot_event,
     get_autopilot_inactive_count,
+    save_autopilot_trade_detect_mode,
 )
 from keyboards import autopilot_kb, ap_pets_kb, ap_inventory_kb, cancel_to_ap_kb, configs_kb, farm_configs_kb, main_configs_kb, type_mask_label, _TYPE_MASKS
 
@@ -69,6 +70,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     batch_size        = cfg["batch_size"]        if cfg else 10
     main_config_id    = cfg.get("main_config_id") if cfg else None
     potion_threshold  = cfg.get("potion_threshold") or 8 if cfg else 8
+    trade_detect_mode = cfg.get("trade_detect_mode") or "events" if cfg else "events"
     trades_done    = cfg["trades_done"]    if cfg else 0
     ready_count    = cfg.get("ready_count", 0) if cfg else 0
     started_at     = cfg["started_at"]     if cfg else None
@@ -126,7 +128,7 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
     lines.append(f"👑 Конфиг мейна: {main_cfg_str}  ·  🧪 Порог зелий: <b>{potion_threshold}</b>")
     lines.append(f"⏱ Проверка: <b>{check_interval}с</b>  ·  📊 Лимит: <b>{batch_size}</b>")
 
-    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, farm_config_id, running, check_interval, batch_size, main_config_id, potion_threshold)
+    return "\n".join(lines), autopilot_kb(main_account, pet_count, config_id, farm_config_id, running, check_interval, batch_size, main_config_id, potion_threshold, trade_detect_mode)
 
 
 async def _show_autopilot(target, user_id: int, edit: bool = False):
@@ -148,6 +150,18 @@ async def open_autopilot(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
     await _show_autopilot(callback.message, callback.from_user.id, edit=True)
+
+
+@router.callback_query(lambda c: c.data == "ap_toggle_detect")
+async def ap_toggle_detect(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    cfg = get_autopilot_config(user_id)
+    current = (cfg.get("trade_detect_mode") or "events") if cfg else "events"
+    new_mode = "inventory" if current == "events" else "events"
+    save_autopilot_trade_detect_mode(user_id, new_mode)
+    label = "📦 Инвентарь" if new_mode == "inventory" else "🎯 События"
+    await callback.answer(f"Режим: {label}")
+    await _show_autopilot(callback.message, user_id, edit=True)
 
 
 @router.callback_query(lambda c: c.data == "ap_refresh")
