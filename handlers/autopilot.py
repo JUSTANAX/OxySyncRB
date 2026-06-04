@@ -10,7 +10,7 @@ from api.accountsops import (
     get_accounts_with_pet_details, set_accounts_enabled, set_accounts_config,
     get_trackstats_accounts, get_all_accounts, get_configs, get_usernames_by_tag,
     get_account_inventory_by_username, _pet_tier, _pet_display_name,
-    restart_accounts, get_pets_batch,
+    restart_accounts, get_pets_batch, get_events,
 )
 from database import (
     get_panel,
@@ -29,6 +29,7 @@ from database import (
     update_autopilot_pet_filters,
     remove_autopilot_queue_entries,
     add_autopilot_event,
+    get_autopilot_inactive_count,
 )
 from keyboards import autopilot_kb, ap_pets_kb, ap_inventory_kb, cancel_to_ap_kb, configs_kb, farm_configs_kb, main_configs_kb, type_mask_label, _TYPE_MASKS
 
@@ -82,10 +83,13 @@ def _build_autopilot_page(user_id: int) -> tuple[str, any]:
         farming_count   = get_autopilot_farming_count(user_id)
         trading_entries = get_autopilot_trading_entries(user_id)
         trading_count   = len(trading_entries)
+        inactive_count  = get_autopilot_inactive_count(user_id)
 
         rt_part = f"  ·  🕐 {rt}" if rt else ""
         lines.append(f"▶️ <b>Работает</b>{rt_part}")
         lines.append("")
+        if inactive_count:
+            lines.append(f"  ⏳ Ждут мейна     <b>{inactive_count}</b>")
         lines.append(f"  🌾 Фармит         <b>{farming_count}</b>")
         lines.append(f"  🦆 Нашли пета     <b>{ready_count}</b>")
         lines.append(f"  🔄 Трейдит         <b>{trading_count}</b>")
@@ -707,11 +711,12 @@ async def ap_start(callback: CallbackQuery):
         parse_mode="HTML",
     )
 
-    (ok_all, ts_accounts, _), (_, raw_accounts, _), face_set, dead_set = await asyncio.gather(
+    (ok_all, ts_accounts, _), (_, raw_accounts, _), face_set, dead_set, (ok_ev, events, _) = await asyncio.gather(
         get_trackstats_accounts(ao_key),
         get_all_accounts(ao_key),
         get_usernames_by_tag(ao_key, "status:face"),
         get_usernames_by_tag(ao_key, "status:dead"),
+        get_events(ao_key, limit=200),
     )
     if not ok_all or not ts_accounts:
         await callback.message.edit_text(
@@ -721,22 +726,26 @@ async def ap_start(callback: CallbackQuery):
         )
         return
 
-    # Set of usernames that are assigned to a device (from /api/accounts)
+    # Detect which accounts are already in game via most recent account_launch event
+    active_now: set[str] = set()
+    if ok_ev and events:
+        seen_ev: set[str] = set()
+        for event in events:  # newest-first from API
+            uname = (event.get("username") or "").strip().lower()
+            if not uname or uname in seen_ev:
+                continue
+            seen_ev.add(uname)
+            if event.get("kind") == "account_launch":
+                active_now.add(uname)
+
     device_assigned: set[str] = {
         (acc.get("username") or acc.get("name") or "").strip().lower()
         for acc in raw_accounts
         if (acc.get("device_id") or "").strip()
     }
 
-    # username→trackstats_id map (needed for pets endpoint)
-    ts_id_map: dict[str, str] = {
-        (acc.get("username") or acc.get("name", "")).lower(): str(acc.get("id") or "")
-        for acc in ts_accounts if acc.get("id")
-    }
-
     main_lower    = cfg["main_account"].lower()
     farm_accounts = []
-    all_usernames = list(ts_id_map.keys())
     for acc in ts_accounts:
         username = acc.get("username") or acc.get("name", "")
         if not username:
@@ -757,27 +766,47 @@ async def ap_start(callback: CallbackQuery):
         )
         return
 
-    farm_usernames = [u for _, u in farm_accounts]
+    # Split: already in game vs not yet started
+    main_already_active = main_lower in active_now
+    already_active = [(aid, u) for aid, u in farm_accounts if u.lower() in active_now]
+    to_start_later = [(aid, u) for aid, u in farm_accounts if u.lower() not in active_now]
 
-    # Apply farm config to all farm accounts
-    if farm_config_id and farm_usernames:
+    # Disable accounts not yet in game
+    if to_start_later:
         await callback.message.edit_text(
-            "🤖 <b>Авто-пилот</b>\n\n⏳ Применяю фарм конфиг...",
+            f"🤖 <b>Авто-пилот</b>\n\n⏳ Выключаю {len(to_start_later)} неактивных аккаунтов...",
             parse_mode="HTML",
         )
-        await set_accounts_config(ao_key, farm_usernames, farm_config_id)
+        await set_accounts_enabled(ao_key, [u for _, u in to_start_later], False)
 
-    # Enable all accounts
+    # Apply farm config to already-active accounts
+    if farm_config_id and already_active:
+        await set_accounts_config(ao_key, [u for _, u in already_active], farm_config_id)
+
+    # Enable main + already-active farm accounts
     await callback.message.edit_text(
-        "🤖 <b>Авто-пилот</b>\n\n⏳ Включаю аккаунты...",
+        "🤖 <b>Авто-пилот</b>\n\n⏳ Включаю мейн и активных...",
         parse_mode="HTML",
     )
     await set_accounts_enabled(ao_key, [cfg["main_account"]], True)
-    if farm_usernames:
-        await set_accounts_enabled(ao_key, farm_usernames, True)
+    if already_active:
+        await set_accounts_enabled(ao_key, [u for _, u in already_active], True)
 
     clear_autopilot_queue(user_id)
-    add_autopilot_queue(user_id, farm_accounts, status='farming')
+
+    if main_already_active and to_start_later:
+        # Main already in game — enable everyone immediately, no waiting needed
+        if farm_config_id:
+            await set_accounts_config(ao_key, [u for _, u in to_start_later], farm_config_id)
+        await set_accounts_enabled(ao_key, [u for _, u in to_start_later], True)
+        add_autopilot_queue(user_id, farm_accounts, status='farming')
+    else:
+        if already_active:
+            add_autopilot_queue(user_id, already_active, status='farming')
+        if to_start_later:
+            # Will be activated once main fires account_launch event
+            add_autopilot_queue(user_id, to_start_later, status='inactive')
+
     set_autopilot_started_at(user_id)
     set_autopilot_running(user_id, True)
     add_autopilot_event(user_id, "started")

@@ -35,6 +35,7 @@ from database import (
     save_autopilot_ready_count,
     get_autopilot_queue_usernames,
     add_autopilot_queue,
+    get_autopilot_inactive_entries,
     get_users_due_for_autoswap,
     get_autoswap_config as get_autoswap_cfg,
     get_users_due_for_deviceswap,
@@ -428,6 +429,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     max_traders_per_server = cfg.get("batch_size") or 10
 
     # Process new events — primary trade detection + launch tracking
+    new_events: list = []
     ok_ev, events, _ = await get_events(ao_key, limit=50)
     if ok_ev and events:
         new_events = [e for e in events if e.get("id", 0) > _last_event_id.get(user_id, 0)]
@@ -497,6 +499,33 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
 
     # Auto-enroll newly unblocked accounts not yet in queue
     main_lower = cfg["main_account"].lower()
+
+    # Activate accounts that were held back waiting for main to launch
+    inactive_entries = get_autopilot_inactive_entries(user_id)
+    if inactive_entries:
+        main_just_launched = any(
+            event.get("kind") == "account_launch" and
+            (event.get("username") or "").lower() == main_lower
+            for event in new_events
+        )
+        if main_just_launched:
+            inactive_usernames = [u for _, _, u in inactive_entries]
+            if farm_config_id:
+                await set_accounts_config(ao_key, inactive_usernames, farm_config_id)
+            await set_accounts_enabled(ao_key, inactive_usernames, True)
+            for eid, _, _ in inactive_entries:
+                set_autopilot_entry_status(eid, "farming")
+            add_autopilot_event(user_id, "main_launched")
+            try:
+                await bot.send_message(
+                    user_id,
+                    f"🚀 <b>Авто-пилот</b> — мейн запустился!\n\n"
+                    f"Запускаю <b>{len(inactive_entries)}</b> ожидавших аккаунтов",
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logging.error("Inactive release notify user=%s: %s", user_id, e)
+
     queue_usernames = get_autopilot_queue_usernames(user_id)
     dead_set = await get_usernames_by_tag(ao_key, "status:dead")
     new_accounts = []
@@ -724,9 +753,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.13 запущен ✅")
+    print("OxySync Bot v2.3.14 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.13</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.14</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)

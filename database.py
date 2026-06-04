@@ -502,6 +502,18 @@ def get_autopilot_trading_count(user_id: int) -> int:
     return len(result.data)
 
 
+def get_autopilot_inactive_entries(user_id: int) -> list[tuple]:
+    c = _get_client()
+    result = c.table("autopilot_queue").select("id, account_id, username").eq("user_id", user_id).eq("status", "inactive").order("id").execute()
+    return [(r["id"], r["account_id"], r["username"]) for r in result.data]
+
+
+def get_autopilot_inactive_count(user_id: int) -> int:
+    c = _get_client()
+    result = c.table("autopilot_queue").select("id").eq("user_id", user_id).eq("status", "inactive").execute()
+    return len(result.data)
+
+
 def increment_autopilot_trades_done(user_id: int):
     c = _get_client()
     current = get_autopilot_trades_done(user_id)
