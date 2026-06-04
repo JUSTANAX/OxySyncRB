@@ -442,7 +442,9 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
                     add_autopilot_event(user_id, "trade_complete", orig_u)
                     _recently_traded_ts[uname] = time.time()
                 elif kind == "account_launch" and uname in farming_set:
-                    _account_launch_ts[uname] = time.time()
+                    event_age = time.time() - (event.get("ts_millis") or 0) / 1000
+                    if event_age < 120:
+                        _account_launch_ts[uname] = time.time()
 
     # Build fresh username→acc_id map from trackstats (avoids stale stored IDs)
     (_, ts_accounts, _), (_, raw_accounts, _) = await asyncio.gather(
@@ -746,9 +748,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.20 запущен ✅")
+    print("OxySync Bot v2.3.21 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.20</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.21</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
