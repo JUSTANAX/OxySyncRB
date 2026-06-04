@@ -1230,49 +1230,51 @@ async def ap_timing(callback: CallbackQuery):
 
 # ─── Лог трейдов ─────────────────────────────────────────────────────────────
 
-@router.callback_query(lambda c: c.data == "ap_trade_log")
-async def ap_trade_log(callback: CallbackQuery):
-    import bot as _bot
+def _build_trade_log_text() -> str:
     import time as _time
-    await callback.answer()
-
-    log = list(reversed(_bot._trade_debug_log))
-    if not log:
-        await callback.message.edit_text(
-            "🪵 <b>Лог трейдов</b>\n\n<i>Пусто — событий ещё не было с момента запуска бота</i>",
-            parse_mode="HTML",
-            reply_markup=ap_inventory_kb(),
-        )
-        return
+    from state_cache import get_trade_debug_log
 
     EVENT_ICON = {
-        "found":   "👁",
-        "→trade":  "🔵",
-        "kick":    "⚡️",
-        "detect":  "🟢",
-        "action":  "🔧",
-        "→farm":   "✅",
-        "warn":    "⚠️",
+        "found":  "👁",
+        "→trade": "🔵",
+        "kick":   "⚡️",
+        "detect": "🟢",
+        "action": "🔧",
+        "→farm":  "✅",
+        "warn":   "⚠️",
     }
+
+    log = list(reversed(get_trade_debug_log()))
+    if not log:
+        return "🪵 <b>Лог трейдов</b>\n\n<i>Пусто — событий ещё не было с момента запуска бота</i>"
 
     now = _time.time()
     lines = ["🪵 <b>Лог трейдов</b> (последние 40)\n"]
     for entry in log[:40]:
         ago = int(now - entry["ts"])
-        if ago < 60:
-            t = f"{ago}с"
-        else:
-            m, s = divmod(ago, 60)
-            t = f"{m}м{s}с"
+        t = f"{ago}с" if ago < 60 else f"{ago // 60}м{ago % 60}с"
         icon   = EVENT_ICON.get(entry["event"], "•")
         name   = entry["username"]
         if len(name) > 16:
             name = name[:14] + "…"
         detail = f"  <i>{entry['detail'][:60]}</i>" if entry["detail"] else ""
         lines.append(f"{icon} <code>{name}</code> [{t} назад]{detail}")
+    return "\n".join(lines)
 
+
+def _trade_log_kb() -> any:
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="ap_trade_log")],
+        [InlineKeyboardButton(text="🔙 Назад",    callback_data="autopilot")],
+    ])
+
+
+@router.callback_query(lambda c: c.data == "ap_trade_log")
+async def ap_trade_log(callback: CallbackQuery):
+    await callback.answer()
     try:
-        await callback.message.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=ap_inventory_kb())
+        await callback.message.edit_text(_build_trade_log_text(), parse_mode="HTML", reply_markup=_trade_log_kb())
     except TelegramBadRequest:
         pass
 

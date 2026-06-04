@@ -9,23 +9,13 @@ from datetime import datetime
 _last_event_id:    dict[int, int]   = {}  # user_id → последний обработанный event id
 _account_launch_ts: dict[str, float] = {}  # username.lower() → время account_launch
 _recently_traded_ts: dict[str, float] = {}  # username.lower() → время завершения трейда
-_trade_timing_log:    list[dict] = []  # последние 30 завершённых трейдов
-_trade_debug_log:     list[dict] = []  # подробный лог событий трейда
-_trade_seen_on_start: set[str]   = set()  # аккаунты залогированные как "уже в трейде"
-
-_TRADE_LOG_MAX   = 30
-_TRADE_DEBUG_MAX = 150
+_trade_timing_log: list[dict] = []
+_TRADE_LOG_MAX    = 30
 
 
 def _tdlog(username: str, event: str, detail: str = ""):
-    _trade_debug_log.append({
-        "ts":       time.time(),
-        "username": username,
-        "event":    event,
-        "detail":   detail,
-    })
-    if len(_trade_debug_log) > _TRADE_DEBUG_MAX:
-        _trade_debug_log.pop(0)
+    from state_cache import tdlog
+    tdlog(username, event, detail)
 
 _TRADE_COOLDOWN = 300  # секунд игнорировать инвентарь после трейда
 
@@ -485,6 +475,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
                     _recently_traded_ts[uname] = time.time()
                     _log_trade(orig_u, activated_at, "events")
                     _tdlog(orig_u, "→farm", f"config={farm_config_id}")
+                    unmark_trade_seen(uname)
                 elif kind == "account_launch" and uname in farming_set:
                     event_age = time.time() - (event.get("ts_millis") or 0) / 1000
                     if event_age < 120:
@@ -514,10 +505,11 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     }
 
     # Trade detection: disabled by script (universal) + mode-specific fallback
+    from state_cache import is_trade_seen, mark_trade_seen, unmark_trade_seen
     for entry_id, acc_id, username, activated_at in get_autopilot_trading_entries(user_id):
-        if username.lower() not in _trade_seen_on_start:
-            _trade_seen_on_start.add(username.lower())
-            _tdlog(username, "found", f"в трейде при запуске/обнаружении бота | disabled={username.lower() in disabled_set}")
+        if not is_trade_seen(username.lower()):
+            mark_trade_seen(username.lower())
+            _tdlog(username, "found", f"в трейде | disabled={username.lower() in disabled_set}")
         u = username.lower()
         trade_done = False
         detect_method = "disabled"
@@ -546,6 +538,7 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
             add_autopilot_event(user_id, "trade_complete", username)
             _recently_traded_ts[u] = time.time()
             _log_trade(username, activated_at, detect_method)
+            unmark_trade_seen(u)
 
     # Auto-enroll newly unblocked accounts not yet in queue
     main_lower = cfg["main_account"].lower()
@@ -804,9 +797,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.27 запущен ✅")
+    print("OxySync Bot v2.3.28 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.27</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.28</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
