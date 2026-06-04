@@ -610,8 +610,12 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
     now_ts = time.time()
     ready_by_pet: dict[str, list] = {}
     for (entry_id, acc_id, username), fresh_id in zip(farming_entries, fresh_ids):
-        launch_ts = _account_launch_ts.get(username.lower(), 0)
+        u_low = username.lower()
+        launch_ts = _account_launch_ts.get(u_low, 0)
         if launch_ts > 0 and now_ts - launch_ts < 60:
+            continue
+        traded_ts = _recently_traded_ts.get(u_low, 0)
+        if traded_ts > 0 and now_ts - traded_ts < _TRADE_COOLDOWN:
             continue
         pet_counts: dict[str, int] = {}
         for p in (pets_map.get(fresh_id) or []):
@@ -797,9 +801,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.28 запущен ✅")
+    print("OxySync Bot v2.3.29 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.28</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.29</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
