@@ -1246,6 +1246,7 @@ async def ap_trade_log(callback: CallbackQuery):
         return
 
     EVENT_ICON = {
+        "found":   "👁",
         "→trade":  "🔵",
         "kick":    "⚡️",
         "detect":  "🟢",

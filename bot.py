@@ -9,8 +9,9 @@ from datetime import datetime
 _last_event_id:    dict[int, int]   = {}  # user_id → последний обработанный event id
 _account_launch_ts: dict[str, float] = {}  # username.lower() → время account_launch
 _recently_traded_ts: dict[str, float] = {}  # username.lower() → время завершения трейда
-_trade_timing_log: list[dict] = []  # последние 30 завершённых трейдов
-_trade_debug_log:  list[dict] = []  # подробный лог событий трейда
+_trade_timing_log:    list[dict] = []  # последние 30 завершённых трейдов
+_trade_debug_log:     list[dict] = []  # подробный лог событий трейда
+_trade_seen_on_start: set[str]   = set()  # аккаунты залогированные как "уже в трейде"
 
 _TRADE_LOG_MAX   = 30
 _TRADE_DEBUG_MAX = 150
@@ -514,6 +515,9 @@ async def _process_one_autopilot(bot: Bot, user_id: int, ao_key: str):
 
     # Trade detection: disabled by script (universal) + mode-specific fallback
     for entry_id, acc_id, username, activated_at in get_autopilot_trading_entries(user_id):
+        if username.lower() not in _trade_seen_on_start:
+            _trade_seen_on_start.add(username.lower())
+            _tdlog(username, "found", f"в трейде при запуске/обнаружении бота | disabled={username.lower() in disabled_set}")
         u = username.lower()
         trade_done = False
         detect_method = "disabled"
@@ -800,9 +804,9 @@ async def main():
     asyncio.create_task(autoswap_loop(bot))
     asyncio.create_task(deviceswap_loop(bot))
     asyncio.create_task(devicetrim_loop(bot))
-    print("OxySync Bot v2.3.26 запущен ✅")
+    print("OxySync Bot v2.3.27 запущен ✅")
     try:
-        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.26</b> запущен", parse_mode="HTML")
+        await bot.send_message(OWNER_ID, "✅ <b>OxySync Bot v2.3.27</b> запущен", parse_mode="HTML")
     except Exception:
         pass
     await dp.start_polling(bot)
